@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lucre.io</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #b9bbbe; font-family: 'Arial', 'Segoe UI', Tahoma, Verdana, sans-serif; user-select: none; }
+    canvas { display: block; }
+    .screen_overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; background: rgba(0, 0, 0, 0.65); backdrop-filter: blur(4px); transition: opacity 0.3s; }
+    .menu_card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: center; width: 320px; }
+    h1 { margin: 0 0 20px 0; color: #333; font-size: 28px; }
+    input[type="text"] { width: 100%; padding: 12px; margin-bottom: 20px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; box-sizing: border-box; outline: none; transition: border 0.2s; text-align: center; }
+    input[type="text"]:focus { border-color: #7CDB5E; }
+    button.main_btn { width: 100%; padding: 12px; font-size: 18px; background: #7CDB5E; border: none; border-radius: 6px; cursor: pointer; color: white; font-weight: bold; transition: transform 0.1s, background 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    button.main_btn:hover { background: #6CC04A; transform: translateY(-2px); }
+    button.main_btn:active { transform: translateY(0); }
+    #chat_input { position: absolute; display: none; width: 300px; padding: 8px; border-radius: 4px; border: 2px solid #333; background: rgba(0, 0, 0, 0.6); color: white; font-weight: bold; text-align: center; z-index: 5; transform: translate(-50%, -100%); outline: none; }
+  </style>
+</head>
+<body>
+<div id="start_screen" class="screen_overlay">
+    <div class="menu_card">
+        <h1>Lucre.io</h1>
+        <input type="text" id="player_name" placeholder="Enter Nickname" maxlength="15">
+        <button class="main_btn" id="play_btn">Play</button>
+        <div style="margin-top: 15px; font-size: 12px; color: #666;">WASD to Move &bull; Click to Shoot<br>E: Auto Fire &bull; C: Auto Spin &bull; R: Override<br>Enter: Chat</div>
+    </div>
+</div>
+<input type="text" id="chat_input" maxlength="40" placeholder="Message...">
+<canvas id="world"></canvas>
+<script>
+let cull_margin = 200;
+let entity_type_tank = 0;
+let entity_type_bullet = 1;
+let entity_type_polygon = 2;
+let last_frame_time = performance.now();
+let canvas_element = document.getElementById("world");
+let ctx = canvas_element.getContext("2d", { alpha: false });
+ctx.lineJoin = "round";
+ctx.lineCap = "round";
+let start_screen_element = document.getElementById("start_screen");
+let name_input_element = document.getElementById("player_name");
+let play_button_element = document.getElementById("play_btn");
+let chat_input_element = document.getElementById("chat_input");
+canvas_element.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+});
+
+CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+    if (w < 2 * r) r = w / 2;
+    if (h < 2 * r) r = h / 2;
+    this.beginPath();
+    this.moveTo(x + r, y);
+    this.arcTo(x + w, y, x + w, y + h, r);
+    this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r);
+    this.arcTo(x, y, x + w, y, r);
+    this.closePath();
+    return this;
+}
+
+let team_color_map = { 0: "#7adbba", 1: "#7CDB5E", 2: "#F08A4B", 3: "#FFD54A", 4: "#B58CFF", 5: "#F7A1C4", 6: "#e8ebf7", 7: "#a4a4ad", 8: "#FFFFFF", 9: "#000000", 10: "#00b2e1", 11: "#00e16e", 12: "#f14e54", 13: "#FFD700", 14: "#8E44AD", 15: "#bf7ff5", 16: "#E056FD", 17: "#5F5F5F", 18: "#FFFFFF", 19: "#1C1C1C", "turret": "#999999", "default": "#FF0000", 30: "#A913CF", 31: "#226EF6", 32: "#FF1000", 33: "#FF9000", 34: "#00E00B", 35: "#FFD300" };
+let theme_colors = { bg: "#dbdbdb", grid: "#000000", barrel: "#a7a7af", outline: "#484848", minimap_bg: "#333333", ui_bg: "rgba(60, 60, 60, 0.85)", ui_bg_hover: "rgba(80, 80, 80, 0.95)", ui_border: "#484848", ui_border_hover: "#7CDB5E", void: "#333333", stat_fill: { 0: "#E056FD", 1: "#FF7F7F", 2: "#FFB74D", 3: "#4FC3F7", 4: "#FFF176", 5: "#E53935", 6: "#81C784", 7: "#4DD0E1", 8: "#9E9E9E", 9: "#5C6BC0" }, stat_bg: "#3a3a3a", stat_border: "#222222" };
+let world_size = 1000;
+let grid_ratio = 1;
+let entity_map = new Map();
+let minimap_dots = [];
+let minimap_obstacles = [];
+let team_bases = [];
+let leaderboard_entries = [];
+let camera = { x: 0, y: 0, id: null, fov: 1.0, target_fov: 1.0 };
+let is_player_dead = false;
+let is_socket_connected = false;
+let death_details = { killer_name: "", score: 0, time_alive: 0, killer_class: 0, killer_color: 0, victim_class: 0, victim_color: 0 };
+let network_latency = 0;
+let server_performance = { mspt: 0, entity_count: 0, client_count: 0 };
+let ping_loop_id = null;
+let notification_list = [];
+let player_last_stats = { score: 0, class_id: 0, color: 0, name: "" };
+let entity_definitions = new Map();
+let available_upgrades = [];
+let upgrade_buttons = [];
+let stat_buttons = [];
+let ignore_upgrade_button = { x: 0, y: 0, w: 0, h: 0, active: false };
+let respawn_button_area = { x: 0, y: 0, w: 0, h: 0 };
+let active_keys = {};
+let socket = null;
+let available_stat_points = 0;
+let current_stat_levels = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+let max_stat_level = 7;
+let stat_labels = ["Health Regen", "Max Health", "Body Damage", "Bullet Speed", "Bullet Health", "Bullet Damage", "Reload", "Move Speed", "Acceleration", "Bullet Mass"];
+let cursor_x = 0;
+let cursor_y = 0;
+let is_mouse_down = false;
+let stats_panel_width = 220;
+let stats_panel_bar_height = 20;
+let stats_panel_gap = 6;
+let stats_panel_min_x = -stats_panel_width * 2;
+let stats_panel_max_x = 20;
+let stats_panel_current_x = stats_panel_max_x;
+let stats_panel_total_height = (10 * (stats_panel_bar_height + stats_panel_gap));
+let stats_panel_slide_speed = 15;
+let is_chat_active = false;
+
+function get_team_color(id) {
+    return team_color_map[id] || team_color_map["default"];
+}
+
+function linear_interpolate(start, end, amount) {
+    return (1 - amount) * start + amount * end;
+}
+
+function interpolate_angle(start, end, amount) {
+    let difference = end - start;
+    while (difference < -Math.PI) difference += 6.283185307179586;
+    while (difference >= Math.PI) difference -= 6.283185307179586;
+    return start + difference * amount;
+}
+
+function resize_canvas() {
+    canvas_element.width = window.innerWidth;
+    canvas_element.height = window.innerHeight;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+}
+
+window.addEventListener('resize', resize_canvas);
+resize_canvas();
+
+function game_loop() {
+    let current_time = performance.now();
+    let delta_time = (current_time - last_frame_time) / 1000;
+    last_frame_time = current_time;
+    if (delta_time > 0.1) delta_time = 0.1;
+    if (camera.id != null && is_socket_connected && !is_player_dead) {
+        if (entity_map.has(camera.id)) {
+            let player_entity = entity_map.get(camera.id);
+            player_last_stats.score = player_entity.score;
+            player_last_stats.class_id = player_entity.class_id;
+            player_last_stats.color = player_entity.color;
+            player_last_stats.name = player_entity.name;
+            update_camera_position(delta_time * 8.0, player_entity.render_x, player_entity.render_y);
+            if (player_entity.class_id != undefined && entity_definitions.has(player_entity.class_id)) {
+                let definition = entity_definitions.get(player_entity.class_id);
+                camera.target_fov = definition.fov || 1.0;
+            } else {
+                camera.target_fov = 1.0;
+            }
+            if (is_chat_active) {
+                let screen_x = (player_entity.render_x - camera.x) * (Math.max(canvas_element.width / (160 * camera.fov), canvas_element.height / (80 * camera.fov))) + canvas_element.width / 2;
+                let screen_y = (player_entity.render_y - camera.y) * (Math.max(canvas_element.width / (160 * camera.fov), canvas_element.height / (80 * camera.fov))) + canvas_element.height / 2;
+                let vertical_offset = 60;
+                chat_input_element.style.left = screen_x + "px";
+                chat_input_element.style.top = (screen_y - vertical_offset) + "px";
+            }
+        }
+    }
+    camera.fov = linear_interpolate(camera.fov, camera.target_fov, delta_time * 4.0);
+    ctx.fillStyle = theme_colors.void;
+    ctx.fillRect(0, 0, canvas_element.width, canvas_element.height);
+    if (!is_socket_connected) {
+        requestAnimationFrame(game_loop);
+        return;
+    }
+    let server_view_width = 160.0;
+    let server_view_height = 80.0;
+    let scale_width = canvas_element.width / (server_view_width * camera.fov);
+    let scale_height = canvas_element.height / (server_view_height * camera.fov);
+    let view_scale = Math.max(scale_width, scale_height);
+    let map_to_screen_x = (world_x) => (world_x - camera.x) * view_scale + canvas_element.width / 2;
+    let map_to_screen_y = (world_y) => (world_y - camera.y) * view_scale + canvas_element.height / 2;
+    let room_left_edge = map_to_screen_x(0);
+    let room_top_edge = map_to_screen_y(0);
+    let scaled_room_size = world_size * view_scale;
+    ctx.fillStyle = theme_colors.bg;
+    ctx.fillRect(room_left_edge, room_top_edge, scaled_room_size, scaled_room_size);
+    render_bases(map_to_screen_x, map_to_screen_y, view_scale);
+    ctx.strokeStyle = theme_colors.outline;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(room_left_edge, room_top_edge, scaled_room_size, scaled_room_size);
+    render_grid(camera.x - (canvas_element.width / 2) / view_scale, camera.x + (canvas_element.width / 2) / view_scale, camera.y - (canvas_element.height / 2) / view_scale, camera.y + (canvas_element.height / 2) / view_scale, map_to_screen_x, map_to_screen_y);
+    let sorted_entities = [...entity_map.entries()].sort((a, b) => {
+        let order_map = { 1: 0, 3: 5, 2: 10, 0: 20 };
+        return (order_map[a[1].body_type] || 0) - (order_map[b[1].body_type] || 0);
+    });
+    let view_min_x = -cull_margin;
+    let view_max_x = canvas_element.width + cull_margin;
+    let view_min_y = -cull_margin;
+    let view_max_y = canvas_element.height + cull_margin;
+    let entities_to_remove = [];
+    sorted_entities.forEach(([id, entity]) => {
+        if (entity.dying) {
+            entity.alpha = (entity.alpha || 1.0) - (delta_time * 10.0);
+            if (entity.alpha <= 0) {
+                entities_to_remove.push(id);
+                return;
+            }
+        }
+        let lerp_factor = (entity.body_type == entity_type_bullet || entity.body_type == 3) ? 15.0 : 10.0;
+        let smooth_factor = Math.min(delta_time * lerp_factor, 1.0);
+        let diff_x = entity.x - entity.render_x;
+        let diff_y = entity.y - entity.render_y;
+        if ((diff_x * diff_x + diff_y * diff_y) > 500 || entity.just_spawned) {
+            entity.render_x = entity.x;
+            entity.render_y = entity.y;
+            entity.just_spawned = false;
+        } else {
+            entity.render_x = linear_interpolate(entity.render_x, entity.x, smooth_factor);
+            entity.render_y = linear_interpolate(entity.render_y, entity.y, smooth_factor);
+        }
+        entity.render_facing = interpolate_angle(entity.render_facing, entity.facing, smooth_factor);
+        if (entity.turrets && entity.turrets.length > 0) {
+            entity.turrets.forEach(t => {
+                t.render_facing = interpolate_angle(t.render_facing || t.facing, t.facing, smooth_factor);
+            });
+        }
+        if (entity.layers && entity.layers.length > 0) {
+            entity.layers.forEach(l => {
+                l.render_facing = interpolate_angle(l.render_facing || l.angle, l.angle, smooth_factor);
+            });
+        }
+        if (entity.display_health == undefined) entity.display_health = entity.health_pct;
+        let health_smooth_speed = (entity.health_pct < entity.display_health) ? 0.3 : 0.1;
+        entity.display_health = linear_interpolate(entity.display_health, entity.health_pct, health_smooth_speed);
+        let screen_pos_x = map_to_screen_x(entity.render_x);
+        let screen_pos_y = map_to_screen_y(entity.render_y);
+        let screen_radius = entity.radius * view_scale;
+        if (screen_pos_x + screen_radius < view_min_x || screen_pos_x - screen_radius > view_max_x || screen_pos_y + screen_radius < view_min_y || screen_pos_y - screen_radius > view_max_y) return;
+        let entity_def = entity_definitions.get(entity.class_id);
+        let turret_defs = entity_def ? entity_def.turrets : [];
+        let layer_defs = entity_def ? entity_def.layers : [];
+        render_entity_body(screen_pos_x, screen_pos_y, screen_radius, entity.render_facing, entity.shape, entity.color, entity.barrels, 2.5, entity.body_type, entity.alpha || 1.0, entity.is_invulnerable, entity.turrets, turret_defs, entity.layers, layer_defs);
+    });
+    sorted_entities.forEach(([id, entity]) => {
+        if (entity.alpha <= 0) return;
+        let screen_pos_x = map_to_screen_x(entity.render_x);
+        let screen_pos_y = map_to_screen_y(entity.render_y);
+        let screen_radius = entity.radius * view_scale;
+        if (screen_pos_x + screen_radius < view_min_x || screen_pos_x - screen_radius > view_max_x || screen_pos_y + screen_radius < view_min_y || screen_pos_y - screen_radius > view_max_y) return;
+        let display_name = id == camera.id ? "" : entity.name;
+        let display_score = id == camera.id ? false : entity.render_score;
+        render_name_overlay(screen_pos_x, screen_pos_y, screen_radius, entity.show_health, entity.display_health, display_name, entity.score, display_score, entity.alpha || 1.0, entity.messages);
+    });
+    entities_to_remove.forEach(id => entity_map.delete(id));
+    if (!is_player_dead) {
+        let panel_start_y = canvas_element.height - 20 - stats_panel_total_height;
+        if (cursor_x < stats_panel_max_x + stats_panel_width * 2 && cursor_y > panel_start_y - 10) {
+            if (stats_panel_current_x < stats_panel_max_x) stats_panel_current_x += stats_panel_slide_speed;
+        } else if (stats_panel_current_x > stats_panel_min_x) stats_panel_current_x -= stats_panel_slide_speed;
+        render_stats_panel(stats_panel_width, stats_panel_bar_height, stats_panel_gap, stats_panel_current_x, stats_panel_total_height, panel_start_y);
+        render_upgrade_menu();
+        render_bottom_hud();
+    }
+    render_minimap();
+    render_server_stats();
+    render_leaderboard();
+    render_notifications();
+    transmit_mouse_position();
+    if (is_player_dead) render_death_screen();
+    requestAnimationFrame(game_loop);
+}
+
+function update_camera_position(amount, target_x, target_y) {
+    camera.x = linear_interpolate(camera.x, target_x, amount);
+    camera.y = linear_interpolate(camera.y, target_y, amount);
+}
+
+function render_bases(map_x, map_y, scale) {
+    ctx.save();
+    for (let base of team_bases) {
+        let x = map_x(base.x);
+        let y = map_y(base.y);
+        let w = base.w * scale;
+        let h = base.h * scale;
+        ctx.fillStyle = get_team_color(base.team);
+        ctx.globalAlpha = 0.15;
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = get_team_color(base.team);
+        ctx.lineWidth = 4;
+        ctx.globalAlpha = 0.3;
+        ctx.strokeRect(x, y, w, h);
+    }
+    ctx.restore();
+}
+
+function render_grid(left, right, top, bottom, map_x, map_y) {
+    ctx.strokeStyle = theme_colors.grid;
+    ctx.globalAlpha = 0.05;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    let start_x = Math.floor(left / grid_ratio) * grid_ratio;
+    let start_y = Math.floor(top / grid_ratio) * grid_ratio;
+    for (let x = start_x; x <= right; x += grid_ratio) {
+        if (x < 0 || x > world_size) continue;
+        let px = map_x(x);
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, canvas_element.height);
+    }
+    for (let y = start_y; y <= bottom; y += grid_ratio) {
+        if (y < 0 || y > world_size) continue;
+        let py = map_y(y);
+        ctx.moveTo(0, py);
+        ctx.lineTo(canvas_element.width, py);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+}
+
+function render_entity_body(x, y, radius, facing, shape, color, barrels, stroke_width, body_type, alpha, is_invulnerable, turret_states, turret_defs, layer_states, layer_defs) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    let total_layers = 1 + (layer_defs ? layer_defs.length : 0);
+    for (let layer_index = 0; layer_index < total_layers; layer_index++) {
+        ctx.save();
+        let current_angle = facing;
+        let current_radius = radius;
+        let current_shape = shape;
+        let current_color = color;
+        if (layer_index > 0) {
+            let layer_def = layer_defs[layer_index - 1];
+            current_angle = (layer_states && layer_states[layer_index - 1]) ? layer_states[layer_index - 1].render_facing : facing;
+            current_radius = radius * layer_def.scale;
+            current_shape = layer_def.shape;
+            current_color = layer_def.color == 255 ? color : layer_def.color;
+        }
+        ctx.rotate(current_angle);
+        if (turret_defs && turret_defs.length > 0) {
+            turret_defs.forEach((def, i) => {
+                if (def.layer == layer_index && !def.render_layer) {
+                    let turret_class = entity_definitions.get(def.class_id);
+                    if (turret_class) {
+                        ctx.save();
+                        let tx = def.offset_forward * current_radius;
+                        let ty = def.offset_side * current_radius;
+                        ctx.translate(tx, ty);
+                        ctx.rotate(-current_angle);
+                        if (turret_states && turret_states[i]) {
+                            ctx.rotate(turret_states[i].render_facing);
+                        } else {
+                            ctx.rotate(current_angle + def.angle_offset);
+                        }
+                        let t_radius = radius * def.size;
+                        let t_barrels = (turret_states && turret_states[i] && turret_states[i].barrels) ? turret_states[i].barrels : turret_class.barrels;
+                        render_shape_and_barrels(t_radius, turret_class.shape, color, t_barrels, stroke_width, is_invulnerable);
+                        ctx.restore();
+                    }
+                }
+            });
+        }
+        if (barrels && barrels.length > 0) {
+            let layer_barrels = barrels.filter(b => b.layer == layer_index);
+            if (layer_barrels.length > 0) {
+                ctx.lineJoin = "round";
+                ctx.lineWidth = stroke_width;
+                ctx.strokeStyle = theme_colors.outline;
+                ctx.fillStyle = theme_colors.barrel;
+                layer_barrels.forEach((barrel) => {
+                    ctx.save();
+                    ctx.translate(barrel.offset_forward * current_radius, barrel.offset_side * current_radius);
+                    ctx.rotate(barrel.angle_offset);
+                    ctx.beginPath();
+                    if (barrel.vertices && barrel.vertices.length > 0) {
+                        barrel.vertices.forEach((vertex, i) => {
+                            let vx = vertex[0] * current_radius;
+                            let vy = vertex[1] * current_radius;
+                            if (i == 0) ctx.moveTo(vx, vy);
+                            else ctx.lineTo(vx, vy);
+                        });
+                        ctx.closePath();
+                    } else {
+                        ctx.rect(0, -current_radius * 0.4, current_radius * 1.5, current_radius * 0.8);
+                    }
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                });
+            }
+        }
+        ctx.lineJoin = "round";
+        ctx.lineWidth = stroke_width;
+        ctx.strokeStyle = theme_colors.outline;
+        ctx.fillStyle = get_team_color(current_color);
+        ctx.beginPath();
+        render_path(current_shape, current_radius);
+        ctx.fill();
+        ctx.stroke();
+        if (is_invulnerable) {
+            ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+            ctx.fill();
+        }
+        if (turret_defs && turret_defs.length > 0) {
+            turret_defs.forEach((def, i) => {
+                if (def.layer == layer_index && def.render_layer) {
+                    let turret_class = entity_definitions.get(def.class_id);
+                    if (turret_class) {
+                        ctx.save();
+                        let tx = def.offset_forward * current_radius;
+                        let ty = def.offset_side * current_radius;
+                        ctx.translate(tx, ty);
+                        ctx.rotate(-current_angle);
+                        if (turret_states && turret_states[i]) {
+                            ctx.rotate(turret_states[i].render_facing);
+                        } else {
+                            ctx.rotate(current_angle + def.angle_offset);
+                        }
+                        let t_radius = radius * def.size;
+                        let t_barrels = (turret_states && turret_states[i] && turret_states[i].barrels) ? turret_states[i].barrels : turret_class.barrels;
+                        render_shape_and_barrels(t_radius, turret_class.shape, color, t_barrels, stroke_width, is_invulnerable);
+                        ctx.restore();
+                    }
+                }
+            });
+        }
+        ctx.restore();
+    }
+    ctx.restore();
+}
+
+function render_name_overlay(x, y, radius, show_health, health_pct, name, score, render_score, alpha, messages) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    if (show_health && health_pct != undefined && health_pct < 0.995) {
+        ctx.save();
+        let bar_width = radius * 2.5;
+        let bar_height = 5;
+        let bar_y = radius + 10;
+        ctx.fillStyle = "#3e3e3e";
+        ctx.fillRect(-bar_width / 2, bar_y, bar_width, bar_height);
+        let pct = Math.max(0, Math.min(1, health_pct));
+        ctx.fillStyle = "#8ecc51";
+        ctx.fillRect(-bar_width / 2, bar_y, bar_width * pct, bar_height);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "#000";
+        ctx.strokeRect(-bar_width / 2, bar_y, bar_width, bar_height);
+        ctx.restore();
+    }
+    let name_font_size = Math.max(12, radius * 0.7);
+    let text_base_y = -(radius + 15);
+    let highest_point_y = text_base_y;
+    if (name || render_score) {
+        ctx.save();
+        ctx.fillStyle = "white";
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 5;
+        ctx.textAlign = "center";
+        ctx.font = `bold ${name_font_size}px Arial`;
+        if (name && name.length > 0) {
+            ctx.strokeText(name, 0, text_base_y);
+            ctx.fillText(name, 0, text_base_y);
+        }
+        if (render_score) {
+            let score_text = score + "";
+            let score_font_size = name_font_size * 0.8;
+            ctx.font = `bold ${score_font_size}px Arial`;
+            let score_y = (name && name.length > 0) ? text_base_y - name_font_size : text_base_y;
+            highest_point_y = score_y;
+            ctx.strokeText(score_text, 0, score_y);
+            ctx.fillText(score_text, 0, score_y);
+        }
+        ctx.restore();
+    }
+    if (messages && messages.length > 0) {
+        ctx.save();
+        ctx.textAlign = "center";
+        let msg_font_size = Math.max(16, radius * 0.9);
+        ctx.font = `bold ${msg_font_size}px Arial`;
+        ctx.lineWidth = 3;
+        ctx.lineJoin = "round";
+        let message_stack_start = highest_point_y - (render_score ? 15 : 5);
+        for (let i = 0; i < messages.length; i++) {
+            let msg = messages[i];
+            let measured_text = ctx.measureText(msg);
+            let text_width = measured_text.width;
+            let box_height = msg_font_size + 12;
+            let box_width = text_width + 24;
+            let y_pos = message_stack_start - (i * (box_height + 4)) - (box_height / 2);
+            ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+            ctx.strokeStyle = "rgba(0,0,0,0.3)";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(-box_width / 2, y_pos - box_height / 2, box_width, box_height, 8);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = "white";
+            ctx.strokeStyle = "black";
+            ctx.lineWidth = 3;
+            ctx.strokeText(msg, 0, y_pos + msg_font_size * 0.35);
+            ctx.fillText(msg, 0, y_pos + msg_font_size * 0.35);
+        }
+        ctx.restore();
+    }
+    ctx.restore();
+}
+
+function render_shape_and_barrels(radius, shape, color, barrels, stroke_width, is_invulnerable) {
+    ctx.lineJoin = "round";
+    ctx.lineWidth = stroke_width;
+    ctx.strokeStyle = theme_colors.outline;
+    if (barrels && barrels.length > 0) {
+        ctx.fillStyle = theme_colors.barrel;
+        barrels.forEach((barrel) => {
+            if (barrel.layer == 0) {
+                ctx.save();
+                ctx.translate(barrel.offset_forward * radius, barrel.offset_side * radius);
+                ctx.rotate(barrel.angle_offset);
+                ctx.beginPath();
+                if (barrel.vertices && barrel.vertices.length > 0) {
+                    barrel.vertices.forEach((vertex, i) => {
+                        let vx = vertex[0] * radius;
+                        let vy = vertex[1] * radius;
+                        if (i == 0) ctx.moveTo(vx, vy);
+                        else ctx.lineTo(vx, vy);
+                    });
+                    ctx.closePath();
+                } else {
+                    ctx.rect(0, -radius * 0.4, radius * 1.5, radius * 0.8);
+                }
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            }
+        });
+    }
+    ctx.fillStyle = get_team_color(color);
+    ctx.beginPath();
+    render_path(shape, radius);
+    ctx.fill();
+    ctx.stroke();
+    if (is_invulnerable) {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+        ctx.fill();
+    }
+}
+
+function render_entity(x, y, radius, facing, shape, color, barrels, stroke_width, show_health, health_pct, name, score, render_score, body_type, alpha, is_invulnerable, turret_states, turret_defs, layer_states, layer_defs) {
+    render_entity_body(x, y, radius, facing, shape, color, barrels, stroke_width, body_type, alpha, is_invulnerable, turret_states, turret_defs, layer_states, layer_defs);
+}
+
+function render_path(shape, radius) {
+    if (shape == 0) {
+        ctx.arc(0, 0, radius, 0, 6.283185307179586);
+    } else if (shape >= 128) {
+        let side_count = shape - 128;
+        let step = 6.283185307179586 / side_count;
+        let outer_radius = radius;
+        let inner_radius = radius * 0.3;
+        let angle_offset = (side_count % 2 == 0) ? Math.PI / side_count : -Math.PI / 2;
+        for (let i = 0; i < side_count; i++) {
+            let theta = i * step + angle_offset;
+            let outer_x = Math.cos(theta) * outer_radius;
+            let outer_y = Math.sin(theta) * outer_radius;
+            if (i == 0) ctx.moveTo(outer_x, outer_y);
+            else ctx.lineTo(outer_x, outer_y);
+            let theta_mid = (i + 0.5) * step + angle_offset;
+            let inner_x = Math.cos(theta_mid) * inner_radius;
+            let inner_y = Math.sin(theta_mid) * inner_radius;
+            ctx.lineTo(inner_x, inner_y);
+        }
+        ctx.closePath();
+    } else {
+        let side_count = shape;
+        let step = 6.283185307179586 / side_count;
+        let render_radius = radius;
+        let angle_offset = 0;
+        if (side_count == 4) {
+            render_radius *= Math.SQRT2;
+            angle_offset = Math.PI / 4;
+        } else if (side_count == 3) {
+            angle_offset = 0;
+        } else if (side_count == 5) {
+            angle_offset = -Math.PI / 2;
+        } else if (side_count == 7) {
+            angle_offset = -Math.PI / 2;
+        } else if (side_count == 9) {
+            angle_offset = -Math.PI / 2;
+        }
+        for (let i = 0; i < side_count; i++) {
+            let theta = i * step + angle_offset;
+            let pos_x = Math.cos(theta) * render_radius;
+            let pos_y = Math.sin(theta) * render_radius;
+            if (i == 0) ctx.moveTo(pos_x, pos_y);
+            else ctx.lineTo(pos_x, pos_y);
+        }
+        ctx.closePath();
+    }
+}
+
+function render_notifications() {
+    let now = Date.now();
+    notification_list = notification_list.filter(n => now - n.start < n.duration);
+    if (notification_list.length == 0) return;
+    let start_y = 20;
+    let height_per_notification = 50;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.font = "bold 20px Arial";
+    ctx.lineWidth = 4;
+    notification_list.forEach((note, index) => {
+        let elapsed = now - note.start;
+        let y_pos = start_y + (index * height_per_notification);
+        let text_width = ctx.measureText(note.text).width;
+        let box_width = text_width + 40;
+        let box_height = 40;
+        let box_x = canvas_element.width / 2 - box_width / 2;
+        let fade = 1.0;
+        if (elapsed > note.duration - 500) fade = (note.duration - elapsed) / 500;
+        ctx.globalAlpha = fade;
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+        ctx.roundRect(box_x, y_pos, box_width, box_height, 10).fill();
+        ctx.fillStyle = "white";
+        ctx.strokeStyle = "black";
+        ctx.strokeText(note.text, canvas_element.width / 2, y_pos + 10);
+        ctx.fillText(note.text, canvas_element.width / 2, y_pos + 10);
+    });
+    ctx.restore();
+}
+
+function render_minimap() {
+    if (world_size == 0) return;
+    let map_display_size = 150;
+    let map_margin = 20;
+    let map_x = canvas_element.width - map_display_size - map_margin;
+    let map_y = canvas_element.height - map_display_size - map_margin;
+    ctx.save();
+    ctx.fillStyle = theme_colors.minimap_bg;
+    ctx.fillRect(map_x, map_y, map_display_size, map_display_size);
+    ctx.strokeStyle = theme_colors.outline;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(map_x, map_y, map_display_size, map_display_size);
+    let minimap_scale = map_display_size / world_size;
+    for (let base of team_bases) {
+        ctx.fillStyle = get_team_color(base.team);
+        ctx.globalAlpha = 0.5;
+        ctx.fillRect(map_x + base.x * minimap_scale, map_y + base.y * minimap_scale, base.w * minimap_scale, base.h * minimap_scale);
+    }
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = "#999";
+    minimap_obstacles.forEach(wall => {
+        let wx = map_x + wall.x * minimap_scale;
+        let wy = map_y + wall.y * minimap_scale;
+        let wr = wall.r * minimap_scale;
+        ctx.fillRect(wx - wr, wy - wr, wr * 2, wr * 2);
+    });
+    minimap_dots.forEach(dot => {
+        let dot_x = map_x + dot.x * minimap_scale;
+        let dot_y = map_y + dot.y * minimap_scale;
+        ctx.fillStyle = get_team_color(dot.color);
+        ctx.beginPath();
+        ctx.arc(dot_x, dot_y, 2.5, 0, 6.283185307179586);
+        ctx.fill();
+    });
+    if (camera.id != null && !is_player_dead) {
+        let self_world_x = camera.x;
+        let self_world_y = camera.y;
+        if (entity_map.has(camera.id)) {
+            let ent = entity_map.get(camera.id);
+            self_world_x = ent.render_x;
+            self_world_y = ent.render_y;
+        }
+        let self_map_x = map_x + self_world_x * minimap_scale;
+        let self_map_y = map_y + self_world_y * minimap_scale;
+        ctx.fillStyle = "#000000";
+        ctx.beginPath();
+        ctx.arc(self_map_x, self_map_y, 2, 0, 6.283185307179586);
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
+function render_server_stats() {
+    let map_size = 150;
+    let map_margin = 20;
+    let map_x = canvas_element.width - map_size - map_margin;
+    let map_y = canvas_element.height - map_size - map_margin;
+    let text_x = map_x;
+    let text_y = map_y - 10;
+    ctx.save();
+    ctx.font = "bold 10px Arial";
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#FFFFFF";
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 4;
+    function draw_text_row(text, y_offset) {
+        ctx.strokeText(text, text_x + map_size, text_y - y_offset);
+        ctx.fillText(text, text_x + map_size, text_y - y_offset);
+    }
+    draw_text_row(`${server_performance.client_count} client${server_performance.client_count == 1 ? "" : "s"}`, 0);
+    draw_text_row(`${server_performance.entity_count} entities`, 13);
+    draw_text_row(`${server_performance.mspt.toFixed(2)} mspt`, 26);
+    draw_text_row(`${network_latency.toFixed(1)} ms`, 39);
+    ctx.font = "bold 16px Arial";
+    ctx.strokeText("lucre.io", text_x + map_size, text_y - 56);
+    ctx.fillText("lucre.io", text_x + map_size, text_y - 56);
+    ctx.restore();
+}
+
+function render_bottom_hud() {
+    ctx.save();
+    let center_x = canvas_element.width / 2;
+    let start_y = canvas_element.height - 35;
+    let width = 420;
+    let height = 28;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "white";
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 4;
+    ctx.font = "bold 26px Arial";
+    let player_name = player_last_stats.name || "Unnamed";
+    ctx.strokeText(player_name, center_x, start_y - 16);
+    ctx.fillText(player_name, center_x, start_y - 16);
+    ctx.fillStyle = "#333";
+    ctx.roundRect(center_x - width / 2, start_y, width, height, height / 2).fill();
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 4;
+    ctx.roundRect(center_x - width / 2, start_y, width, height, height / 2).stroke();
+    let class_def = entity_definitions.get(player_last_stats.class_id);
+    let class_name = class_def ? class_def.name : "Tank";
+    let hud_text = `Score: ${player_last_stats.score} — ${class_name}`;
+    ctx.font = "bold 15px Arial";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "white";
+    ctx.fillText(hud_text, center_x, start_y + height / 2 + 1);
+    ctx.restore();
+}
+
+function render_leaderboard() {
+    if (leaderboard_entries.length == 0) return;
+    let width = 300;
+    let pos_x = canvas_element.width - width - 20;
+    let pos_y = 20;
+    let entry_height = 28;
+    let spacing = 6;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.font = "bold 24px Arial";
+    ctx.fillStyle = "white";
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 4;
+    ctx.strokeText("Leaderboard", pos_x + width / 2, pos_y + 24);
+    ctx.fillText("Leaderboard", pos_x + width / 2, pos_y + 24);
+    ctx.restore();
+    let current_y = pos_y + 40;
+    for (let i = 0; i < leaderboard_entries.length; i++) {
+        let entry = leaderboard_entries[i];
+        let row_y = current_y + i * (entry_height + spacing);
+        let tank_def = entity_definitions.get(entry.class_id);
+        let tank_name = tank_def ? tank_def.name : "Unknown";
+        let bar_color = get_team_color(entry.color);
+        ctx.save();
+        ctx.fillStyle = theme_colors.minimap_bg;
+        ctx.roundRect(pos_x, row_y, width, entry_height, entry_height / 2).fill();
+        ctx.fillStyle = bar_color;
+        ctx.globalAlpha = 0.8;
+        ctx.roundRect(pos_x, row_y, leaderboard_entries[i].score / leaderboard_entries[0].score * width, entry_height, entry_height / 2).fill();
+        ctx.globalAlpha = 1.0;
+        ctx.strokeStyle = "rgba(0,0,0,0.4)";
+        ctx.lineWidth = 4;
+        ctx.roundRect(pos_x, row_y, width, entry_height, entry_height / 2).stroke();
+        let icon_radius = entry_height * 0.18;
+        let icon_x = pos_x + entry_height / 2 + 4;
+        let icon_y = row_y + entry_height / 2;
+        render_entity(icon_x, icon_y, icon_radius, -Math.PI / 2, tank_def ? tank_def.shape : 0, entry.color, tank_def ? tank_def.barrels : [], 1.5, false, 1.0, "", 0, false, entity_type_tank, 1.0, false, [], tank_def ? tank_def.turrets : [], [], tank_def ? tank_def.layers : []);
+        ctx.fillStyle = "white";
+        ctx.font = "bold 14px Arial";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.shadowColor = "black";
+        ctx.shadowBlur = 3;
+        let score_num = entry.score;
+        let suffixes = ["", "k", "m", "b", "t"];
+        let suffix_idx = 0;
+        while (true) {
+            if ((score_num / 1000) >= 1) {
+                score_num = (score_num / 1000).toFixed(1);
+                suffix_idx++;
+            } else break;
+        };
+        let formatted_score = score_num + suffixes[suffix_idx];
+        let entry_text = `${entry.name || "Unnamed"} - ${tank_name} - ${formatted_score}`;
+        ctx.fillText(entry_text, icon_x + icon_radius + 15, row_y + entry_height / 2 + 1);
+        ctx.restore();
+    }
+}
+
+function render_stats_panel(panel_width, bar_height, gap, x_pos, total_height, y_pos) {
+    stat_buttons = [];
+    ctx.save();
+    if (available_stat_points > 0) {
+        ctx.textAlign = "right";
+        ctx.fillStyle = "white";
+        ctx.font = "bold 24px Arial";
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 4;
+        let points_text = `x${available_stat_points}`;
+        let points_x = x_pos + 115 + panel_width;
+        ctx.strokeText(points_text, points_x, y_pos - 15);
+        ctx.fillText(points_text, points_x, y_pos - 15);
+    }
+    for (let i = 0; i < 10; i++) {
+        let row_y = y_pos + i * (bar_height + gap);
+        let level = current_stat_levels[i];
+        let color = theme_colors.stat_fill[i] || "#fff";
+        let is_maxed = level >= max_stat_level;
+        let upgrade_available = available_stat_points > 0 && !is_maxed;
+        ctx.fillStyle = "white";
+        ctx.font = "bold 13px Arial";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 4.5;
+        ctx.strokeText(stat_labels[i], x_pos + 105, row_y + bar_height / 2);
+        ctx.fillText(stat_labels[i], x_pos + 105, row_y + bar_height / 2);
+        let bar_x = x_pos + 115;
+        let bar_w = panel_width;
+        let radius = bar_height / 2;
+        ctx.fillStyle = theme_colors.stat_bg;
+        ctx.roundRect(bar_x, row_y, bar_w, bar_height, radius).fill();
+        if (level > 0) {
+            let fill_w = Math.max(bar_height, (level / max_stat_level) * bar_w);
+            ctx.fillStyle = color;
+            ctx.roundRect(bar_x, row_y, fill_w, bar_height, radius).fill();
+        }
+        ctx.strokeStyle = theme_colors.stat_border;
+        ctx.lineWidth = 3;
+        ctx.roundRect(bar_x, row_y, bar_w, bar_height, radius).stroke();
+        ctx.beginPath();
+        ctx.strokeStyle = "rgba(0,0,0,0.3)";
+        for (let k = 1; k < max_stat_level; k++) {
+            let div_x = (k / max_stat_level) * bar_w;
+            ctx.moveTo(bar_x + div_x, row_y + 2);
+            ctx.lineTo(bar_x + div_x, row_y + bar_height - 2);
+        }
+        ctx.stroke();
+        let btn_x = bar_x + bar_w + 8;
+        let btn_size = bar_height;
+        if (is_maxed) {
+            ctx.fillStyle = "white";
+            ctx.font = "bold 12px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.strokeStyle = "black";
+            ctx.strokeText("[MAX]", btn_x + btn_size / 2 + 5, row_y + bar_height / 2);
+            ctx.fillText("[MAX]", btn_x + btn_size / 2 + 5, row_y + bar_height / 2);
+        } else if (upgrade_available) {
+            if (available_stat_points > 0) {
+                ctx.fillStyle = "rgba(0,0,0,0.5)";
+                let is_hovered = cursor_x >= btn_x && cursor_x <= btn_x + btn_size && cursor_y >= row_y && cursor_y <= row_y + btn_size;
+                if (is_hovered) ctx.fillStyle = "rgba(255,255,255,0.3)";
+                ctx.roundRect(btn_x, row_y, btn_size, btn_size, 4).fill();
+                ctx.strokeStyle = "#fff";
+                ctx.roundRect(btn_x, row_y, btn_size, btn_size, 4).stroke();
+                ctx.fillStyle = "white";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.font = "bold 16px Arial";
+                ctx.fillText("+", btn_x + btn_size / 2, row_y + btn_size / 2 + 1);
+                stat_buttons.push({ x: btn_x, y: row_y, w: btn_size, h: btn_size, idx: i });
+            }
+        }
+    }
+    ctx.restore();
+}
+
+function render_death_screen() {
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+    ctx.fillRect(0, 0, canvas_element.width, canvas_element.height);
+    let center_x = canvas_element.width / 2;
+    let center_y = canvas_element.height / 2;
+    let panel_w = 550;
+    let panel_h = 420;
+    let panel_x = center_x - panel_w / 2;
+    let panel_y = center_y - panel_h / 2;
+    ctx.fillStyle = "rgba(235, 235, 235, 0.95)";
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(panel_x, panel_y, panel_w, panel_h, 15);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#333";
+    ctx.textAlign = "center";
+    ctx.font = "bold 32px Arial";
+    ctx.fillText("You Died", center_x, panel_y + 50);
+    ctx.beginPath();
+    ctx.moveTo(panel_x + 40, panel_y + 70);
+    ctx.lineTo(panel_x + panel_w - 40, panel_y + 70);
+    ctx.strokeStyle = "#ccc";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    let death_message = "You succumbed to:";
+    let killer = death_details.killer_name || "An unnamed entity";
+    ctx.fillStyle = "#666";
+    ctx.font = "18px Arial";
+    ctx.fillText(death_message, center_x, panel_y + 100);
+    ctx.fillStyle = "#333";
+    ctx.font = "bold 24px Arial";
+    ctx.fillText(killer, center_x, panel_y + 130);
+    let preview_scale = 1.0;
+    let preview_y = panel_y + 210;
+    let victim_x_pos = center_x - 100;
+    ctx.font = "bold 14px Arial";
+    if (death_details.victim_class != undefined && entity_definitions.has(death_details.victim_class)) {
+        let def = entity_definitions.get(death_details.victim_class);
+        render_entity(victim_x_pos, preview_y, 35 * preview_scale, 0, def.shape, death_details.victim_color, def.barrels, 3.5, false, 1.0, "", 0, false, entity_type_tank, 1.0, false, [], def.turrets, [], def.layers);
+        ctx.fillStyle = "#222";
+        ctx.fillText(def.name, victim_x_pos, preview_y - 60);
+    } else {
+        render_entity(victim_x_pos, preview_y, 35 * preview_scale, 0, 0, death_details.victim_color || 10, [], 3.5, false, 1.0, "?", 0, false, entity_type_tank, 1.0, false, [], [], [], []);
+    }
+    let killer_x_pos = center_x + 100;
+    if (death_details.killer_class != undefined && entity_definitions.has(death_details.killer_class)) {
+        let def = entity_definitions.get(death_details.killer_class);
+        render_entity(killer_x_pos, preview_y, 35 * preview_scale, 0, def.shape, death_details.killer_color, def.barrels, 3.5, false, 1.0, "", 0, false, entity_type_tank, 1.0, false, [], def.turrets, [], def.layers);
+        ctx.fillStyle = "#222";
+        ctx.fillText(def.name, killer_x_pos, preview_y - 60);
+    } else {
+        render_entity(killer_x_pos, preview_y, 35 * preview_scale, 0, 0, death_details.killer_color, [], 3.5, false, 1.0, "?", 0, false, entity_type_tank, 1.0, false, [], [], [], []);
+    }
+    ctx.fillStyle = "#444";
+    ctx.font = "16px Arial";
+    ctx.fillText("Score: " + death_details.score.toLocaleString(), center_x, panel_y + 280);
+    let seconds_alive = death_details.time_alive || 0;
+    let time_units = ["s", "m", "h", "d"];
+    let time_string = "";
+    if (seconds_alive < 60) {
+        time_string = Math.floor(seconds_alive) + time_units[0];
+    } else if (seconds_alive < 3600) {
+        let m = Math.floor(seconds_alive / 60);
+        let s = Math.floor(seconds_alive % 60);
+        time_string = m + time_units[1] + " " + s + time_units[0];
+    } else if (seconds_alive < 86400) {
+        let h = Math.floor(seconds_alive / 3600);
+        let m = Math.floor((seconds_alive % 3600) / 60);
+        let s = Math.floor(seconds_alive % 60);
+        time_string = h + time_units[2] + " " + m + time_units[1] + " " + s + time_units[0];
+    } else {
+        let d = Math.floor(seconds_alive / 86400);
+        let h = Math.floor((seconds_alive % 86400) / 3600);
+        let m = Math.floor((seconds_alive % 3600) / 60);
+        let s = Math.floor(seconds_alive % 60);
+        time_string = d + time_units[3] + " " + h + time_units[2] + " " + m + time_units[1] + " " + s + time_units[0];
+    }
+    ctx.fillText("Time Alive: " + time_string, center_x, panel_y + 305);
+    let btn_w = 200;
+    let btn_h = 50;
+    let btn_x = center_x - btn_w / 2;
+    let btn_y = panel_y + panel_h - 80;
+    respawn_button_area = { x: btn_x, y: btn_y, w: btn_w, h: btn_h };
+    let is_hovered = cursor_x >= btn_x && cursor_x <= btn_x + btn_w && cursor_y >= btn_y && cursor_y <= btn_y + btn_h;
+    ctx.fillStyle = is_hovered ? "#2ECC71" : "#27AE60";
+    ctx.strokeStyle = "#1e8449";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(btn_x, btn_y, btn_w, btn_h, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "white";
+    ctx.font = "bold 22px Arial";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Respawn", center_x, btn_y + btn_h / 2);
+    ctx.font = "14px Arial";
+    ctx.fillStyle = "#888";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText("(Press Enter to respawn)", center_x, btn_y + btn_h + 18);
+    ctx.restore();
+}
+
+function update_upgrade_options(available_ids) {
+    available_upgrades = available_ids;
+}
+
+function update_leaderboard_data(data) {
+    leaderboard_entries = data;
+}
+
+function render_upgrade_menu() {
+    upgrade_buttons = [];
+    ignore_upgrade_button = { x: 0, y: 0, w: 0, h: 0, active: false };
+    if (available_upgrades.length == 0) return;
+    let start_x = 20;
+    let start_y = 20;
+    let btn_size = 80;
+    let btn_gap = 12;
+    let num_cols = 3;
+    let max_y = start_y;
+    available_upgrades.forEach((id, index) => {
+        let def = entity_definitions.get(id);
+        if (!def) return;
+        let col = index % num_cols;
+        let row = Math.floor(index / num_cols);
+        let x = start_x + col * (btn_size + btn_gap);
+        let y = start_y + row * (btn_size + btn_gap);
+        if (y + btn_size > max_y) max_y = y + btn_size;
+        let is_hovered = false;
+        if (cursor_x >= x && cursor_x <= x + btn_size && cursor_y >= y && cursor_y <= y + btn_size) {
+            is_hovered = true;
+        }
+        let draw_y = is_hovered ? y - 2 : y;
+        let bg_col = is_hovered ? theme_colors.ui_bg_hover : theme_colors.ui_bg;
+        let border_col = is_hovered ? theme_colors.ui_border_hover : theme_colors.ui_border;
+        ctx.save();
+        ctx.fillStyle = bg_col;
+        ctx.strokeStyle = border_col;
+        ctx.lineWidth = 4;
+        ctx.fillRect(x, draw_y, btn_size, btn_size);
+        ctx.strokeRect(x, draw_y, btn_size, btn_size);
+        let center_x = x + btn_size / 2;
+        let center_y = draw_y + btn_size / 2;
+        let preview_rad = btn_size / 6;
+        render_entity(center_x, center_y, preview_rad, -Math.PI / 2, def.shape, 10, def.barrels, 3.0, false, 1.0, "", 0, false, entity_type_tank, 1.0, false, [], def.turrets, [], def.layers);
+        ctx.fillStyle = "white";
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 4;
+        ctx.font = "bold 12px Arial";
+        ctx.textAlign = "center";
+        ctx.strokeText(def.name || "Tank", center_x, center_y + btn_size / 2 - 5);
+        ctx.fillText(def.name || "Tank", center_x, center_y + btn_size / 2 - 5);
+        ctx.restore();
+        upgrade_buttons.push({ x: x, y: y, w: btn_size, h: btn_size, id: id });
+    });
+    let ignore_w = (btn_size + btn_gap) * num_cols - btn_gap;
+    let ignore_h = 24;
+    let ignore_x = start_x;
+    let ignore_y = max_y + 12;
+    ignore_upgrade_button = { x: ignore_x, y: ignore_y, w: ignore_w, h: ignore_h, active: true };
+    let is_ignore_hover = cursor_x >= ignore_x && cursor_x <= ignore_x + ignore_w && cursor_y >= ignore_y && cursor_y <= ignore_y + ignore_h;
+    ctx.save();
+    ctx.fillStyle = is_ignore_hover ? "rgba(255, 100, 100, 0.9)" : "rgba(100, 50, 50, 0.8)";
+    ctx.strokeStyle = is_ignore_hover ? "#ffaaaa" : "#552222";
+    ctx.lineWidth = 4;
+    ctx.roundRect(ignore_x, ignore_y, ignore_w, ignore_h, 4).fill();
+    ctx.roundRect(ignore_x, ignore_y, ignore_w, ignore_h, 4).stroke();
+    ctx.fillStyle = "white";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 14px Arial";
+    ctx.fillText("Ignore", ignore_x + ignore_w / 2, ignore_y + ignore_h / 2);
+    ctx.restore();
+}
+
+function send_upgrade_request(class_id) {
+    if (!socket || !is_socket_connected) return;
+    socket.send(new Uint8Array([3, class_id]));
+    available_upgrades = [];
+}
+
+function send_stat_upgrade_request(stat_index) {
+    if (!socket || !is_socket_connected) return;
+    socket.send(new Uint8Array([8, stat_index]));
+}
+
+function send_respawn_request() {
+    if (!socket || !is_socket_connected) return;
+    socket.send(new Uint8Array([4, 1]));
+}
+
+function send_toggle_request(type_code) {
+    if (!socket || !is_socket_connected) return;
+    socket.send(new Uint8Array([10, type_code]));
+}
+
+function transmit_chat_message(text_content) {
+    if (!socket || !is_socket_connected || text_content.length == 0) return;
+    let text_encoder = new TextEncoder();
+    let raw_bytes = text_encoder.encode(text_content);
+    let byte_length = raw_bytes.length;
+    if (byte_length > 40) byte_length = 40;
+    let packet_buffer = new Uint8Array(2 + byte_length);
+    packet_buffer[0] = 6;
+    packet_buffer[1] = byte_length;
+    packet_buffer.set(raw_bytes.subarray(0, byte_length), 2);
+    socket.send(packet_buffer);
+}
+
+function transmit_ping() {
+    if (socket && socket.readyState == WebSocket.OPEN) {
+        let buffer = new ArrayBuffer(9);
+        let data_view = new DataView(buffer);
+        data_view.setUint8(0, 250);
+        data_view.setFloat64(1, performance.now(), true);
+        socket.send(buffer);
+    }
+}
+
+function transmit_mouse_position() {
+    if (is_player_dead || is_chat_active) return;
+    let smaller_dimension = Math.min(canvas_element.width, canvas_element.height);
+    let zoom_scale = smaller_dimension / (80 * camera.fov);
+    let world_mouse_x = camera.x + (cursor_x - canvas_element.width / 2) / zoom_scale;
+    let world_mouse_y = camera.y + (cursor_y - canvas_element.height / 2) / zoom_scale;
+    let aiming_angle = Math.atan2(cursor_y - canvas_element.height / 2, cursor_x - canvas_element.width / 2);
+    let packet_buffer = new DataView(new ArrayBuffer(13));
+    packet_buffer.setUint8(0, 0);
+    packet_buffer.setFloat32(1, aiming_angle, true);
+    packet_buffer.setFloat32(5, world_mouse_x, true);
+    packet_buffer.setFloat32(9, world_mouse_y, true);
+    if (socket.readyState == WebSocket.OPEN) socket.send(packet_buffer);
+}
+
+play_button_element.onclick = () => {
+    let nickname = name_input_element.value.trim();
+    localStorage.setItem("player_name", nickname);
+    connect_to_server(nickname);
+};
+
+name_input_element.addEventListener("keyup", (event) => {
+    if (event.key == "Enter") {
+        play_button_element.click();
+    }
+});
+
+function connect_to_server(player_nickname) {
+    start_screen_element.style.display = "none";
+    socket = new WebSocket("ws://localhost:8080/");
+    socket.binaryType = "arraybuffer";
+    let url_hash = window.location.hash;
+    let complete_name = player_nickname;
+    if (url_hash.length > 1) {
+        complete_name = player_nickname + url_hash;
+    }
+    let transmit_input_state = () => {
+        if (is_player_dead || !is_socket_connected || is_chat_active) return;
+        let horizontal = 8, vertical = 8;
+        if ((active_keys["a"] || active_keys["ArrowLeft"]) && !(active_keys["d"] || active_keys["ArrowRight"])) horizontal = 1;
+        else if ((active_keys["d"] || active_keys["ArrowRight"]) && !(active_keys["a"] || active_keys["ArrowLeft"])) horizontal = 0;
+        if ((active_keys["s"] || active_keys["ArrowDown"]) && !(active_keys["w"] || active_keys["ArrowUp"])) vertical = 0;
+        else if ((active_keys["w"] || active_keys["ArrowUp"]) && !(active_keys["s"] || active_keys["ArrowDown"])) vertical = 1;
+        let input_code = 16;
+        if (horizontal != 8 && vertical != 8) input_code = 4 + horizontal * 2 + vertical;
+        else if (horizontal == 8 && vertical != 8) input_code = vertical + 2;
+        else if (horizontal != 8 && vertical == 8) input_code = horizontal;
+        socket.send(new Uint8Array([1, input_code]));
+    };
+    window.onkeydown = key_event => {
+        if (key_event.key == "Enter") {
+            if (is_player_dead) {
+                send_respawn_request();
+                return;
+            }
+            if (is_chat_active) {
+                let chat_text = chat_input_element.value.trim();
+                if (chat_text.length > 0) transmit_chat_message(chat_text);
+                is_chat_active = false;
+                chat_input_element.style.display = "none";
+                chat_input_element.value = "";
+                if (socket.readyState == WebSocket.OPEN) socket.send(new Uint8Array([2, 0]));
+            } else {
+                is_chat_active = true;
+                chat_input_element.style.display = "block";
+                chat_input_element.focus();
+                active_keys = {};
+                if (socket.readyState == WebSocket.OPEN) socket.send(new Uint8Array([1, 16]));
+            }
+            return;
+        }
+        if (is_chat_active) return;
+        if (!is_player_dead && key_event.key >= '0' && key_event.key <= '9') {
+            let stat_index = parseInt(key_event.key) - 1;
+            if (key_event.key == '0') stat_index = 9;
+            send_stat_upgrade_request(stat_index);
+        }
+        if (!is_player_dead && key_event.code == "KeyE") {
+            send_toggle_request(1);
+        }
+        if (!is_player_dead && key_event.code == "KeyC") {
+            send_toggle_request(2);
+        }
+        if (!is_player_dead && key_event.code == "KeyR") {
+            send_toggle_request(3);
+        }
+        if (key_event.repeat) return;
+        active_keys[key_event.key] = true;
+        transmit_input_state();
+    };
+    window.onkeyup = key_event => {
+        if (is_chat_active) return;
+        active_keys[key_event.key] = false;
+        transmit_input_state();
+    };
+    socket.onopen = () => {
+        is_socket_connected = true;
+        let name_encoder = new TextEncoder();
+        let encoded_name_bytes = name_encoder.encode(complete_name);
+        socket.send(encoded_name_bytes);
+        ping_loop_id = setInterval(transmit_ping, 1000);
+        window.onmousemove = mouse_event => {
+            cursor_x = mouse_event.clientX;
+            cursor_y = mouse_event.clientY;
+            transmit_mouse_position();
+        };
+        window.onmousedown = (mouse_event) => {
+            if (mouse_event.button == 0) {
+                is_mouse_down = true;
+                if (is_player_dead) {
+                    if (cursor_x >= respawn_button_area.x && cursor_x <= respawn_button_area.x + respawn_button_area.w && cursor_y >= respawn_button_area.y && cursor_y <= respawn_button_area.y + respawn_button_area.h) {
+                        send_respawn_request();
+                    }
+                    return;
+                }
+                if (is_chat_active) return;
+                for (let button of stat_buttons) {
+                    if (cursor_x >= button.x && cursor_x <= button.x + button.w && cursor_y >= button.y && cursor_y <= button.y + button.h) {
+                        send_stat_upgrade_request(button.idx);
+                        return;
+                    }
+                }
+                for (let button of upgrade_buttons) {
+                    if (cursor_x >= button.x && cursor_x <= button.x + button.w && cursor_y >= button.y && cursor_y <= button.y + button.h) {
+                        send_upgrade_request(button.id);
+                        return;
+                    }
+                }
+                if (ignore_upgrade_button.active && cursor_x >= ignore_upgrade_button.x && cursor_x <= ignore_upgrade_button.x + ignore_upgrade_button.w && cursor_y >= ignore_upgrade_button.y && cursor_y <= ignore_upgrade_button.y + ignore_upgrade_button.h) {
+                    available_upgrades = [];
+                    return;
+                }
+                if (socket.readyState == WebSocket.OPEN) socket.send(new Uint8Array([2, 1]));
+            };
+        };
+        window.onmouseup = (mouse_event) => {
+            if (mouse_event.button == 0) {
+                is_mouse_down = false;
+                if (socket.readyState == WebSocket.OPEN) socket.send(new Uint8Array([2, 0]));
+            }
+        };
+    };
+    socket.onmessage = (message_event) => {
+        let data_view = new DataView(message_event.data);
+        let packet_id = data_view.getUint8(0);
+        if (packet_id == 0) {
+            world_size = data_view.getFloat32(1, true);
+            grid_ratio = world_size / data_view.getUint32(5, true);
+        } else if (packet_id == 1) {
+            let byte_pointer = 1;
+            let active_entity_ids = new Set();
+            let text_decoder = new TextDecoder("utf-8");
+            while (byte_pointer < message_event.data.byteLength) {
+                let entity_id = data_view.getUint32(byte_pointer, true);
+                byte_pointer += 4;
+                let pos_x = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let pos_y = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let radius = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let body_type = data_view.getUint8(byte_pointer);
+                byte_pointer += 1;
+                let shape_id = data_view.getUint8(byte_pointer);
+                byte_pointer += 1;
+                let color_id = data_view.getUint8(byte_pointer);
+                byte_pointer += 1;
+                let class_id = data_view.getUint8(byte_pointer);
+                byte_pointer += 1;
+                let current_score = data_view.getUint32(byte_pointer, true);
+                byte_pointer += 4;
+                let should_render_score = data_view.getUint8(byte_pointer) == 1;
+                byte_pointer += 1;
+                let name_length = data_view.getUint8(byte_pointer);
+                byte_pointer += 1;
+                let entity_name = "";
+                if (name_length > 0) {
+                    let name_bytes = new Uint8Array(message_event.data, byte_pointer, name_length);
+                    entity_name = text_decoder.decode(name_bytes);
+                    byte_pointer += name_length;
+                }
+                let show_health_bar = data_view.getUint8(byte_pointer) == 1;
+                byte_pointer += 1;
+                let health_percentage = 1.0;
+                if (show_health_bar) {
+                    health_percentage = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                }
+                let facing_angle = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let is_god_mode = data_view.getUint8(byte_pointer) == 1;
+                byte_pointer += 1;
+                let barrel_count = data_view.getUint32(byte_pointer, true);
+                byte_pointer += 4;
+                let barrel_list = [];
+                for (let b = 0; b < barrel_count; b++) {
+                    let angle_off = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let off_fwd = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let off_side = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let recoil_val = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let spread_val = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let layer_id = data_view.getUint8(byte_pointer);
+                    byte_pointer += 1;
+                    let vertex_count = data_view.getUint8(byte_pointer);
+                    byte_pointer += 1;
+                    let vertices_list = [];
+                    for (let v = 0; v < vertex_count; v++) {
+                        let vert_x = data_view.getFloat32(byte_pointer, true);
+                        byte_pointer += 4;
+                        let vert_y = data_view.getFloat32(byte_pointer, true);
+                        byte_pointer += 4;
+                        vertices_list.push([vert_x, vert_y]);
+                    }
+                    barrel_list.push({ angle_offset: angle_off, offset_forward: off_fwd, offset_side: off_side, recoil: recoil_val, spread: spread_val, vertices: vertices_list, layer: layer_id });
+                }
+                let turret_count = data_view.getUint8(byte_pointer);
+                byte_pointer += 1;
+                let turret_list = [];
+                for (let t = 0; t < turret_count; t++) {
+                    let turret_facing = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let t_barrel_count = data_view.getUint8(byte_pointer);
+                    byte_pointer += 1;
+                    let t_barrel_list = [];
+                    for (let tb = 0; tb < t_barrel_count; tb++) {
+                        let t_vertex_count = data_view.getUint8(byte_pointer);
+                        byte_pointer += 1;
+                        let t_vertex_list = [];
+                        for (let tv = 0; tv < t_vertex_count; tv++) {
+                            let tv_x = data_view.getFloat32(byte_pointer, true);
+                            byte_pointer += 4;
+                            let tv_y = data_view.getFloat32(byte_pointer, true);
+                            byte_pointer += 4;
+                            t_vertex_list.push([tv_x, tv_y]);
+                        }
+                        t_barrel_list.push({ vertices: t_vertex_list });
+                    }
+                    turret_list.push({ facing: turret_facing, barrels: t_barrel_list });
+                }
+                let layer_count = data_view.getUint8(byte_pointer);
+                byte_pointer += 1;
+                let layer_list = [];
+                for (let l = 0; l < layer_count; l++) {
+                    let layer_angle = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    layer_list.push({ render_facing: layer_angle });
+                }
+                let message_count = data_view.getUint8(byte_pointer);
+                byte_pointer += 1;
+                let message_list = [];
+                for (let m = 0; m < message_count; m++) {
+                    let msg_len = data_view.getUint8(byte_pointer);
+                    byte_pointer += 1;
+                    let msg_bytes = new Uint8Array(message_event.data, byte_pointer, msg_len);
+                    let msg_text = text_decoder.decode(msg_bytes);
+                    byte_pointer += msg_len;
+                    message_list.push(msg_text);
+                }
+                active_entity_ids.add(entity_id);
+                if (entity_map.has(entity_id)) {
+                    let existing_entity = entity_map.get(entity_id);
+                    let distance_sq = (existing_entity.x - pos_x) * (existing_entity.x - pos_x) + (existing_entity.y - pos_y) * (existing_entity.y - pos_y);
+                    if (existing_entity.class_id != class_id || distance_sq > 250000) {
+                        existing_entity.just_spawned = true;
+                    }
+                    existing_entity.x = pos_x;
+                    existing_entity.y = pos_y;
+                    existing_entity.facing = facing_angle;
+                    existing_entity.radius = radius;
+                    existing_entity.barrels = barrel_list;
+                    existing_entity.shape = shape_id;
+                    existing_entity.color = color_id;
+                    existing_entity.show_health = show_health_bar;
+                    existing_entity.health_pct = health_percentage;
+                    existing_entity.dying = false;
+                    existing_entity.alpha = 1.0;
+                    existing_entity.class_id = class_id;
+                    existing_entity.score = current_score;
+                    existing_entity.name = entity_name;
+                    existing_entity.render_score = should_render_score;
+                    existing_entity.is_invulnerable = is_god_mode;
+                    existing_entity.body_type = body_type;
+                    existing_entity.messages = message_list;
+                    if (!existing_entity.turrets || existing_entity.turrets.length != turret_list.length) {
+                        existing_entity.turrets = turret_list;
+                        existing_entity.turrets.forEach(t => t.render_facing = t.facing);
+                    } else {
+                        existing_entity.turrets.forEach((et, idx) => {
+                            et.facing = turret_list[idx].facing;
+                            if (turret_list[idx].barrels && turret_list[idx].barrels.length > 0) {
+                                et.barrels = [];
+                                let def = entity_definitions.get(class_id);
+                                if (def && def.turrets && def.turrets[idx]) {
+                                    let t_cls = entity_definitions.get(def.turrets[idx].class_id);
+                                    if (t_cls) {
+                                        et.barrels = t_cls.barrels.map((b_orig, b_i) => {
+                                            let new_b = Object.assign({}, b_orig);
+                                            if (turret_list[idx].barrels[b_i]) {
+                                                new_b.vertices = turret_list[idx].barrels[b_i].vertices;
+                                            }
+                                            return new_b;
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    if (!existing_entity.layers || existing_entity.layers.length != layer_list.length) {
+                        existing_entity.layers = layer_list;
+                    } else {
+                        existing_entity.layers.forEach((el, idx) => {
+                            el.angle = layer_list[idx].render_facing;
+                        });
+                    }
+                } else {
+                    let init_turrets = turret_list;
+                    init_turrets.forEach(t => { t.render_facing = t.facing; });
+                    entity_map.set(entity_id, { x: pos_x, y: pos_y, render_x: pos_x, render_y: pos_y, facing: facing_angle, render_facing: facing_angle, radius: radius, body_type: body_type, shape: shape_id, color: color_id, barrels: barrel_list, show_health: show_health_bar, health_pct: health_percentage, display_health: health_percentage, class_id: class_id, score: current_score, name: entity_name, render_score: should_render_score, alpha: 1.0, is_invulnerable: is_god_mode, just_spawned: true, turrets: init_turrets, layers: layer_list, messages: message_list });
+                }
+            }
+            for (let id of entity_map.keys()) {
+                if (!active_entity_ids.has(id)) {
+                    let ent = entity_map.get(id);
+                    ent.dying = true;
+                }
+            }
+        } else if (packet_id == 2) {
+            let new_camera_id = Number(data_view.getBigUint64(1, true));
+            camera.id = new_camera_id;
+            camera.fov = 1.0;
+            camera.target_fov = 1.0;
+            is_player_dead = false;
+            available_upgrades = [];
+            available_stat_points = 0;
+            current_stat_levels = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            if (entity_map.has(new_camera_id)) {
+                let ent = entity_map.get(new_camera_id);
+                ent.render_x = ent.x;
+                ent.render_y = ent.y;
+            }
+        } else if (packet_id == 3) {
+            let def_count = data_view.getUint32(1, true);
+            let byte_pointer = 5;
+            let text_decoder = new TextDecoder("utf-8");
+            for (let k = 0; k < def_count; k++) {
+                let def_id = data_view.getUint8(byte_pointer++);
+                let def_name_len = data_view.getUint8(byte_pointer++);
+                let def_name = "";
+                if (def_name_len > 0) {
+                    let name_bytes = new Uint8Array(message_event.data, byte_pointer, def_name_len);
+                    def_name = text_decoder.decode(name_bytes);
+                    byte_pointer += def_name_len;
+                }
+                let body_rad = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let shape_val = data_view.getUint8(byte_pointer++);
+                let fov_val = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let def_layer_count = data_view.getUint8(byte_pointer++);
+                let def_layers = [];
+                for (let l = 0; l < def_layer_count; l++) {
+                    let l_shape = data_view.getUint8(byte_pointer++);
+                    let l_color = data_view.getUint8(byte_pointer++);
+                    let l_scale = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let l_spin_speed = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let l_spin_dir = data_view.getUint8(byte_pointer++) == 1;
+                    def_layers.push({ shape: l_shape, color: l_color, scale: l_scale, spin_speed: l_spin_speed, spin_direction: l_spin_dir });
+                }
+                let def_barrel_count = data_view.getUint32(byte_pointer, true);
+                byte_pointer += 4;
+                let def_barrels = [];
+                for (let b = 0; b < def_barrel_count; b++) {
+                    let angle_off = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let off_fwd = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let off_side = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let recoil_val = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let spread_val = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let layer_id = data_view.getUint8(byte_pointer);
+                    byte_pointer += 1;
+                    let vert_count = data_view.getUint8(byte_pointer);
+                    byte_pointer += 1;
+                    let vertices = [];
+                    for (let v = 0; v < vert_count; v++) {
+                        let vx = data_view.getFloat32(byte_pointer, true);
+                        byte_pointer += 4;
+                        let vy = data_view.getFloat32(byte_pointer, true);
+                        byte_pointer += 4;
+                        vertices.push([vx, vy]);
+                    }
+                    def_barrels.push({ angle_offset: angle_off, offset_forward: off_fwd, offset_side: off_side, recoil: recoil_val, spread: spread_val, vertices: vertices, layer: layer_id });
+                }
+                let def_turret_count = data_view.getUint32(byte_pointer, true);
+                byte_pointer += 4;
+                let def_turrets = [];
+                for (let t = 0; t < def_turret_count; t++) {
+                    let t_cls_id = data_view.getUint8(byte_pointer++);
+                    let t_off_f = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let t_off_s = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let t_ang_o = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let t_size = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let t_stat_m = data_view.getFloat32(byte_pointer, true);
+                    byte_pointer += 4;
+                    let t_layer = data_view.getUint8(byte_pointer++);
+                    let t_override = data_view.getUint8(byte_pointer++) == 1;
+                    let t_render_layer = data_view.getUint8(byte_pointer++) == 1;
+                    def_turrets.push({ class_id: t_cls_id, offset_forward: t_off_f, offset_side: t_off_s, angle_offset: t_ang_o, size: t_size, stat_multiplier: t_stat_m, override_target: t_override, layer: t_layer, render_layer: t_render_layer });
+                }
+                entity_definitions.set(def_id, { id: def_id, name: def_name, body_radius: body_rad, shape: shape_val, barrels: def_barrels, fov: fov_val, turrets: def_turrets, layers: def_layers });
+            }
+        } else if (packet_id == 4) {
+            let upgrade_target_id = Number(data_view.getBigUint64(1, true));
+            if (upgrade_target_id == camera.id) {
+                let option_count = data_view.getUint8(9);
+                let options_list = [];
+                for (let u = 0; u < option_count; u++) options_list.push(data_view.getUint8(10 + u));
+                update_upgrade_options(options_list);
+            }
+        } else if (packet_id == 5) {
+            let dot_count = data_view.getUint32(1, true);
+            let byte_pointer = 5;
+            minimap_dots = [];
+            for (let k = 0; k < dot_count; k++) {
+                let dot_id = data_view.getUint32(byte_pointer, true);
+                byte_pointer += 4;
+                let mx = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let my = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let m_color = data_view.getUint8(byte_pointer++);
+                if (dot_id != camera.id) minimap_dots.push({ x: mx, y: my, color: m_color });
+            }
+        } else if (packet_id == 6) {
+            let wall_count = data_view.getUint32(1, true);
+            let byte_pointer = 5;
+            minimap_obstacles = [];
+            for (let k = 0; k < wall_count; k++) {
+                let wx = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let wy = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let wr = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                minimap_obstacles.push({ x: wx, y: wy, r: wr });
+            }
+        } else if (packet_id == 7) {
+            let lb_count = data_view.getUint8(1);
+            let byte_pointer = 2;
+            let lb_data = [];
+            let text_decoder = new TextDecoder("utf-8");
+            for (let k = 0; k < lb_count; k++) {
+                if (byte_pointer >= data_view.byteLength) break;
+                let lb_class_id = data_view.getUint8(byte_pointer++);
+                if (byte_pointer >= data_view.byteLength) break;
+                let lb_color = data_view.getUint8(byte_pointer++);
+                if (byte_pointer >= data_view.byteLength) break;
+                let lb_name_len = data_view.getUint8(byte_pointer++);
+                let lb_name = "";
+                if (lb_name_len > 0 && byte_pointer + lb_name_len <= data_view.byteLength) {
+                    let lb_name_bytes = new Uint8Array(message_event.data, byte_pointer, lb_name_len);
+                    lb_name = text_decoder.decode(lb_name_bytes);
+                    byte_pointer += lb_name_len;
+                } else if (lb_name_len > 0) byte_pointer += lb_name_len;
+                if (byte_pointer + 4 <= data_view.byteLength) {
+                    let lb_score = data_view.getUint32(byte_pointer, true);
+                    byte_pointer += 4;
+                    lb_data.push({ name: lb_name, score: lb_score, class_id: lb_class_id, color: lb_color });
+                }
+            }
+            update_leaderboard_data(lb_data);
+        } else if (packet_id == 9) {
+            available_stat_points = data_view.getUint8(1);
+            for (let s = 0; s < 10; s++) current_stat_levels[s] = data_view.getUint8(2 + s);
+        } else if (packet_id == 11) {
+            let base_count = data_view.getUint16(1, true);
+            let byte_pointer = 3;
+            team_bases = [];
+            for (let b = 0; b < base_count; b++) {
+                let bx = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let by = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let bw = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let bh = data_view.getFloat32(byte_pointer, true);
+                byte_pointer += 4;
+                let b_team = data_view.getUint8(byte_pointer++);
+                team_bases.push({ x: bx, y: by, w: bw, h: bh, team: b_team });
+            }
+        } else if (packet_id == 12) {
+            server_performance.mspt = data_view.getFloat32(1, true);
+            server_performance.entity_count = data_view.getUint32(5, true);
+            server_performance.client_count = data_view.getUint32(9, true);
+        } else if (packet_id == 15) {
+            let code_len = data_view.getUint8(1);
+            if (code_len > 0) {
+                let text_decoder = new TextDecoder("utf-8");
+                let code_bytes = new Uint8Array(message_event.data, 2, code_len);
+                let party_code = text_decoder.decode(code_bytes);
+                window.location.hash = "#" + party_code;
+            }
+        } else if (packet_id == 20) {
+            is_player_dead = true;
+            camera.id = null;
+            is_chat_active = false;
+            chat_input_element.style.display = "none";
+            let k_name_len = data_view.getUint8(1);
+            let text_decoder = new TextDecoder("utf-8");
+            let k_name_bytes = new Uint8Array(message_event.data, 2, k_name_len);
+            let k_name = text_decoder.decode(k_name_bytes);
+            let byte_pointer = 2 + k_name_len;
+            let final_score_val = data_view.getUint32(byte_pointer, true);
+            byte_pointer += 4;
+            let time_alive_val = data_view.getUint32(byte_pointer, true);
+            byte_pointer += 4;
+            let k_col = data_view.getUint8(byte_pointer++);
+            let k_cls = data_view.getUint8(byte_pointer++);
+            let v_col = data_view.getUint8(byte_pointer++);
+            let v_cls = data_view.getUint8(byte_pointer++);
+            death_details = { killer_name: k_name, score: final_score_val, time_alive: time_alive_val, killer_color: k_col, killer_class: k_cls, victim_color: v_col, victim_class: v_cls };
+        } else if (packet_id == 80) {
+            let note_len = data_view.getUint8(1);
+            let text_decoder = new TextDecoder("utf-8");
+            let note_bytes = new Uint8Array(message_event.data, 2, note_len);
+            let note_text = text_decoder.decode(note_bytes);
+            if (notification_list.length == 3) notification_list.shift();
+            notification_list.push({ text: note_text, start: Date.now(), duration: 3000 });
+        } else if (packet_id == 250) {
+            let timestamp = data_view.getFloat64(1, true);
+            network_latency = performance.now() - timestamp;
+        }
+    };
+    socket.onclose = () => {
+        is_socket_connected = false;
+        entity_map.clear();
+        start_screen_element.style.display = "flex";
+        is_mouse_down = false;
+        if (ping_loop_id) clearInterval(ping_loop_id);
+        is_chat_active = false;
+        chat_input_element.style.display = "none";
+    };
+}
+
+if (localStorage.getItem("player_name")) name_input_element.value = localStorage.getItem("player_name");
+game_loop();
+</script>
+</body>
+</html>
