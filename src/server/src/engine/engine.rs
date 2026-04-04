@@ -32,7 +32,6 @@ pub struct Entity {
     pub acceleration_x: f32,
     pub acceleration_y: f32,
     pub movement_acceleration: f32,
-    pub movement_acceleration_45_deg: f32,
     pub radius: f32,
     pub body_type: u8,
     has_friction: bool,
@@ -297,7 +296,6 @@ impl Room {
                     acceleration_x: 0.0,
                     acceleration_y: 0.0,
                     movement_acceleration,
-                    movement_acceleration_45_deg: movement_acceleration * 0.70710675,
                     radius,
                     body_type,
                     has_friction,
@@ -331,7 +329,6 @@ impl Room {
                     acceleration_x: 0.0,
                     acceleration_y: 0.0,
                     movement_acceleration,
-                    movement_acceleration_45_deg: movement_acceleration * 0.70710675,
                     radius,
                     body_type,
                     has_friction,
@@ -397,20 +394,20 @@ impl Room {
                 entity.acceleration_y = -entity.movement_acceleration;
             }
             4 => {
-                entity.acceleration_x = entity.movement_acceleration_45_deg;
-                entity.acceleration_y = entity.movement_acceleration_45_deg;
+                entity.acceleration_x = entity.movement_acceleration * 0.70710675;
+                entity.acceleration_y = entity.movement_acceleration * 0.70710675;
             }
             5 => {
-                entity.acceleration_x = entity.movement_acceleration_45_deg;
-                entity.acceleration_y = -entity.movement_acceleration_45_deg;
+                entity.acceleration_x = entity.movement_acceleration * 0.70710675;
+                entity.acceleration_y = -entity.movement_acceleration * 0.70710675;
             }
             6 => {
-                entity.acceleration_x = -entity.movement_acceleration_45_deg;
-                entity.acceleration_y = entity.movement_acceleration_45_deg;
+                entity.acceleration_x = -entity.movement_acceleration * 0.70710675;
+                entity.acceleration_y = entity.movement_acceleration * 0.70710675;
             }
             7 => {
-                entity.acceleration_x = -entity.movement_acceleration_45_deg;
-                entity.acceleration_y = -entity.movement_acceleration_45_deg;
+                entity.acceleration_x = -entity.movement_acceleration * 0.70710675;
+                entity.acceleration_y = -entity.movement_acceleration * 0.70710675;
             }
             _ => {}
         }
