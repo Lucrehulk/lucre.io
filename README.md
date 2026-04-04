@@ -24,4 +24,8 @@ The game features an event system, which includes fun little minigames and event
 
 Also yes, I know the main.rs code is pretty shitty LOL. This was just a personal project of mine and not made to be great. The only thing that was heavily intended to be optimized in this was my own physics engine--which is a seperate project that is just used in this.
 
-Anyways yeah there's a few other mechanical differences with the game like slightly different stats. But that's about it. I'll attach some screenshots and videos of gameplay to this repo soon and call it a day.
+Some videos. May add more later.
+
+[video (29).webm](https://github.com/user-attachments/assets/3e936409-d721-441e-833d-b6d2b95170c0)
+[video (28).webm](https://github.com/user-attachments/assets/89081416-ce1d-4c97-bcb3-0e5ee1e087f4)
+[video (27).webm](https://github.com/user-attachments/assets/a4430467-c3a8-47b3-ae68-91947c17a6ce)
