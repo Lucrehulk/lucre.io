@@ -78,7 +78,6 @@ fn spawn_game_entity(world_room: &mut Room, game_entities: &mut HashMap<usize, G
                  physics_entity.terminal_velocity_in_direction = entity_definition.base_speed * speed_multiplier;
                  let acceleration_multiplier = 0.05 + (game_entity.stats[8] as f32 * 0.005);
                  physics_entity.movement_acceleration = acceleration_multiplier;
-                 physics_entity.movement_acceleration_45_deg = acceleration_multiplier * 0.70710678;
              }
         }
     }
@@ -1775,7 +1774,6 @@ fn handle_input<F>(entity_id: usize, packet_data: Vec<u8>, world_room: &mut Room
                         physics_entity.terminal_velocity_in_direction = new_definition.base_speed * speed_multiplier;
                         let acceleration_multiplier = 0.05 + (game_entity.stats[8] as f32 * 0.005);
                         physics_entity.movement_acceleration = acceleration_multiplier;
-                        physics_entity.movement_acceleration_45_deg = acceleration_multiplier * 0.70710678;
                     }
                 }
                 if let Some(client_id) = client_id_optional {
@@ -1835,7 +1833,6 @@ fn handle_input<F>(entity_id: usize, packet_data: Vec<u8>, world_room: &mut Room
                             if let Some(physics_entity) = world_room.entities.get_mut(entity_id) {
                                 let acceleration_val = 0.05 + (game_entity.stats[8] as f32 * 0.005);
                                 physics_entity.movement_acceleration = acceleration_val;
-                                physics_entity.movement_acceleration_45_deg = acceleration_val * 0.70710678;
                             }
                         }
                      }
