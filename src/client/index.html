@@ -1117,7 +1117,7 @@ name_input_element.addEventListener("keyup", (event) => {
 function connect_to_server(player_nickname) {
     start_screen_element.style.display = "none";
     // Reminder, if you're hosting on an actual server you'll want to change this to a wss://host of course.
-    socket = new WebSocket("ws://localhost:8080/");
+    socket = new WebSocket("https://ubiquitous-adventure-wq974gj7jp5crpx-8080.app.github.dev/");
     socket.binaryType = "arraybuffer";
     let url_hash = window.location.hash;
     let complete_name = player_nickname;

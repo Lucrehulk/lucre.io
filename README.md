@@ -22,7 +22,9 @@ The game features an event system, which includes fun little minigames and event
 4. Meteor Shower - Meteor entities will spawn--entities that will roam around the map in a straight and constant direction. They have an insanely high mass and can pretty much only be redirected by walls or hitting one another. Anyone who touches a meteor will take damage. After a certain amount of time all meteors will despawn.
 5. Paint Job - Bases are all removed. Now, tiles that players move to become that player's color base tile. Teams must compete to have the most tiles by the end of the event duration. At the ends the event, the team with the most tiles on the map will be declared the winner and every player on it will recieve 50k score. After the event ends team bases are restored.
 
-Also yes, I know the main.rs code is pretty shitty LOL. This was just a personal project of mine and not made to be great. The only thing that was heavily intended to be optimized in this was my own physics engine--which is a seperate project that is just used in this.
+Also yes, I know the main.rs code is pretty shitty. This was just a personal project of mine and not made to be great. The only thing that was heavily intended to be optimized in this was my own physics engine--which is a seperate project that is just used in this.
+
+As of June 6, 2026 I am republicizing this too after previously having kept it private due to concerns of conflicts over previous projects, but after my attention had been brought to the project again by someone I figured I'd repost it, as initial concerns regarding conflicts are no longer valid. I also did just update it with my more optimized and updated engine. Otherwise the same.
 
 Some videos. May add more later.
 
