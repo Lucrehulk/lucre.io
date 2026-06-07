@@ -24,10 +24,4 @@ The game features an event system, which includes fun little minigames and event
 
 Also yes, I know the main.rs code is pretty shitty. This was just a personal project of mine and not made to be great. The only thing that was heavily intended to be optimized in this was my own physics engine--which is a seperate project that is just used in this.
 
-As of June 6, 2026 I am republicizing this too after previously having kept it private due to concerns of conflicts over previous projects, but after my attention had been brought to the project again by someone I figured I'd repost it, as initial concerns regarding conflicts are no longer valid. I also did just update it with my more optimized and updated engine. Otherwise the same.
-
-Some videos. May add more later.
-
-[video (29).webm](https://github.com/user-attachments/assets/3e936409-d721-441e-833d-b6d2b95170c0)
-[video (28).webm](https://github.com/user-attachments/assets/89081416-ce1d-4c97-bcb3-0e5ee1e087f4)
-[video (27).webm](https://github.com/user-attachments/assets/a4430467-c3a8-47b3-ae68-91947c17a6ce)
+Anyways it's a decent game. Not good but just a fun little project.
