@@ -11,7 +11,7 @@ use crate::models::*;
 use crate::pathfinding::*;
 use crate::utils::*;
 use collision_engine::engine::engine::Room;
-use collision_engine::engine::config::config_data::{ROOM_SIZE, SPATIAL_GRID_DIMENSION, TICK_TIME, THREADS, STORE_COLLISIONS};
+use collision_engine::engine::config::config_data::{CELL_SIZE, TICK_TIME, THREADS, STORE_COLLISIONS};
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
@@ -19,7 +19,8 @@ use std::{collections::{HashMap, HashSet}, net::IpAddr, sync::{Arc, atomic::Orde
 use tokio::{net::TcpListener, sync::mpsc, time::sleep};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use futures_util::{StreamExt, SinkExt};
-const NODE_SIZE: f32 = ROOM_SIZE / (SPATIAL_GRID_DIMENSION as f32);
+
+const SPATIAL_GRID_DIMENSION: usize = (ROOM_SIZE / CELL_SIZE) as usize;
 
 fn send_notification(client_sender: &mpsc::UnboundedSender<Vec<u8>>, notification_message: &str) {
     let mut notification_packet = vec![80];
@@ -51,8 +52,8 @@ fn apply_entity_stats(game_entity: &mut GameEntity, entity_class_definition: &En
     game_entity.reload_ticks = (entity_class_definition.base_reload as f32 * reload_reduction_factor).max(2.0) as usize;
 }
 
-fn spawn_game_entity(world_room: &mut Room, game_entities: &mut HashMap<usize, GameEntity>, tank_classes: &HashMap<u8, EntityClass>, position_x: f32, position_y: f32, facing_angle: f32, entity_mass: f32, friction: f32, velocity_x: f32, velocity_y: f32, terminal_velocity: f32, movement_acceleration: f32, entity_radius: f32, body_type: u8, is_static: bool, shape_id: u8, team_id: u8, color_id: u8, class_id: u8, barrels: Vec<Barrel>, name: String, score: u32, render_score: bool, parent_id_optional: Option<usize>, parent_barrel_index: usize, initial_health: i32, max_health: i32, regeneration: i32, damage: i32, reload_ticks: usize, fov_factor: f32, spin_rate: f32, orbit_radius: f32, creation_tick: usize, lifetime: usize, entity_type: u8, is_bot: bool, should_render_health: bool, invulnerable: bool, client_id: Option<usize>) -> usize {
-    let entity_id = world_room.create_entity(position_x, position_y, entity_mass, friction, velocity_x, velocity_y, terminal_velocity, movement_acceleration, entity_radius, body_type, is_static);
+fn spawn_game_entity(world_room: &mut Room, game_entities: &mut HashMap<usize, GameEntity>, tank_classes: &HashMap<u8, EntityClass>, position_x: f32, position_y: f32, facing_angle: f32, entity_mass: f32, friction: f32, velocity_x: f32, velocity_y: f32, terminal_velocity: f32, movement_acceleration: f32, entity_radius: f32, body_type: u8, collision_type: u8, shape_id: u8, team_id: u8, color_id: u8, class_id: u8, barrels: Vec<Barrel>, name: String, score: u32, render_score: bool, parent_id_optional: Option<usize>, parent_barrel_index: usize, initial_health: i32, max_health: i32, regeneration: i32, damage: i32, reload_ticks: usize, fov_factor: f32, spin_rate: f32, orbit_radius: f32, creation_tick: usize, lifetime: usize, entity_type: u8, is_bot: bool, should_render_health: bool, invulnerable: bool, client_id: Option<usize>) -> usize {
+    let entity_id = world_room.create_entity(position_x, position_y, entity_mass, friction, velocity_x, velocity_y, terminal_velocity, movement_acceleration, entity_radius, body_type, collision_type);
     let parent_id = parent_id_optional.unwrap_or(entity_id);
     let mut game_entity = GameEntity::new(facing_angle, barrels, shape_id, team_id, color_id, class_id, name, score, render_score, parent_id, parent_barrel_index, initial_health, max_health, regeneration, damage, reload_ticks, fov_factor, spin_rate, orbit_radius, creation_tick, lifetime, entity_type, is_bot, should_render_health, invulnerable, client_id);
     if tank_classes.contains_key(&class_id) {
@@ -104,7 +105,7 @@ fn setup_map_and_bases(maze_manager: &mut MazeManager, rng: &mut ThreadRng) -> V
                          maze_manager.set_tile(x, y, false);
                      }
                  }
-                 game_bases.push(BaseZone { x: base_x as f32 * NODE_SIZE, y: base_y as f32 * NODE_SIZE, w: width as f32 * NODE_SIZE, h: height as f32 * NODE_SIZE, team_id: selected_colors[index], party_code: generate_code(rng) });
+                 game_bases.push(BaseZone { x: base_x as f32 * CELL_SIZE, y: base_y as f32 * CELL_SIZE, w: width as f32 * CELL_SIZE, h: height as f32 * CELL_SIZE, team_id: selected_colors[index], party_code: generate_code(rng) });
              }
         },
         1 => {
@@ -121,7 +122,7 @@ fn setup_map_and_bases(maze_manager: &mut MazeManager, rng: &mut ThreadRng) -> V
                              maze_manager.set_tile(x, y, false);
                          }
                      }
-                     game_bases.push(BaseZone { x: base_x as f32 * NODE_SIZE, y: 0.0, w: width as f32 * NODE_SIZE, h: height as f32 * NODE_SIZE, team_id: selected_colors[index], party_code: generate_code(rng) });
+                     game_bases.push(BaseZone { x: base_x as f32 * CELL_SIZE, y: 0.0, w: width as f32 * CELL_SIZE, h: height as f32 * CELL_SIZE, team_id: selected_colors[index], party_code: generate_code(rng) });
                  }
              } else {
                  let strip_positions = vec![0, SPATIAL_GRID_DIMENSION - BASE_WIDTH_STRIP];
@@ -133,7 +134,7 @@ fn setup_map_and_bases(maze_manager: &mut MazeManager, rng: &mut ThreadRng) -> V
                              maze_manager.set_tile(x, y, false);
                          }
                      }
-                     game_bases.push(BaseZone { x: 0.0, y: base_y as f32 * NODE_SIZE, w: width as f32 * NODE_SIZE, h: height as f32 * NODE_SIZE, team_id: selected_colors[index], party_code: generate_code(rng) });
+                     game_bases.push(BaseZone { x: 0.0, y: base_y as f32 * CELL_SIZE, w: width as f32 * CELL_SIZE, h: height as f32 * CELL_SIZE, team_id: selected_colors[index], party_code: generate_code(rng) });
                  }
              }
         },
@@ -149,7 +150,7 @@ fn setup_map_and_bases(maze_manager: &mut MazeManager, rng: &mut ThreadRng) -> V
                         maze_manager.set_tile(x, y, false);
                     }
                 }
-                game_bases.push(BaseZone { x: base_x as f32 * NODE_SIZE, y: base_y as f32 * NODE_SIZE, w: width as f32 * NODE_SIZE, h: height as f32 * NODE_SIZE, team_id: selected_colors[index], party_code: generate_code(rng) });
+                game_bases.push(BaseZone { x: base_x as f32 * CELL_SIZE, y: base_y as f32 * CELL_SIZE, w: width as f32 * CELL_SIZE, h: height as f32 * CELL_SIZE, team_id: selected_colors[index], party_code: generate_code(rng) });
             }
         }
     }
@@ -158,7 +159,7 @@ fn setup_map_and_bases(maze_manager: &mut MazeManager, rng: &mut ThreadRng) -> V
 
 #[tokio::main]
 async fn main() {
-    let mut world_room = Room::init();
+    let mut world_room = Room::init(ROOM_SIZE);
     let mut game_entities: HashMap<usize, GameEntity> = HashMap::new();
     let mut player_sessions: HashMap<usize, PlayerSession> = HashMap::new();
     let mut ip_to_client_map: HashMap<IpAddr, usize> = HashMap::new();
@@ -200,7 +201,7 @@ async fn main() {
         wall_init_packet.extend(position_x.to_le_bytes());
         wall_init_packet.extend(position_y.to_le_bytes());
         wall_init_packet.extend(wall_radius.to_le_bytes());
-        spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, position_x, position_y, 0.0, f32::MAX, 0.0, 0.0, 0.0, 0.0, 0.0, wall_radius, 0, true, 4, 255, 7, 0, Vec::new(), "".to_string(), 0, false, None, 0, SENTINEL_HEALTH, SENTINEL_HEALTH, 0, 0, 0, 1.0, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_WALL, false, false, false, None);
+        spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, position_x, position_y, 0.0, f32::MAX, 0.0, 0.0, 0.0, 0.0, 0.0, wall_radius, 0, 2, 4, 255, 7, 0, Vec::new(), "".to_string(), 0, false, None, 0, SENTINEL_HEALTH, SENTINEL_HEALTH, 0, 0, 0, 1.0, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_WALL, false, false, false, None);
     }
     for tile_data in maze_manager.true_tiles { wall_coordinates.insert((tile_data[0], tile_data[1])); };
     let shared_wall_packet = Arc::new(wall_init_packet);
@@ -211,8 +212,8 @@ async fn main() {
     let mut spawn_coordinate_generator = |rng: &mut ThreadRng, current_bases: &[BaseZone], team_id_opt: Option<u8>| -> [f32; 2] {
         if let Some(target_team_id) = team_id_opt {
             if let Some(base) = current_bases.iter().find(|b| b.team_id == target_team_id) {
-                let pad_x = (NODE_SIZE * 0.5).min(base.w * 0.49).max(0.0);
-                let pad_y = (NODE_SIZE * 0.5).min(base.h * 0.49).max(0.0);
+                let pad_x = (CELL_SIZE * 0.5).min(base.w * 0.49).max(0.0);
+                let pad_y = (CELL_SIZE * 0.5).min(base.h * 0.49).max(0.0);
                 let min_x = base.x + pad_x;
                 let max_x = (base.x + base.w - pad_x).max(min_x);
                 let min_y = base.y + pad_y;
@@ -223,10 +224,10 @@ async fn main() {
         if empty_tiles.is_empty() { return [ROOM_SIZE/2.0, ROOM_SIZE/2.0]; };
         loop {
             let selected_tile = empty_tiles[rng.gen_range(0..empty_tiles.len())];
-            let min_x = selected_tile[0] * NODE_SIZE + NODE_SIZE*0.1;
-            let max_x = min_x + NODE_SIZE*0.8;
-            let min_y = selected_tile[1] * NODE_SIZE + NODE_SIZE*0.1;
-            let max_y = min_y + NODE_SIZE*0.8;
+            let min_x = selected_tile[0] * CELL_SIZE + CELL_SIZE*0.1;
+            let max_x = min_x + CELL_SIZE*0.8;
+            let min_y = selected_tile[1] * CELL_SIZE + CELL_SIZE*0.1;
+            let max_y = min_y + CELL_SIZE*0.8;
             let random_x = rng.gen_range(min_x..max_x);
             let random_y = rng.gen_range(min_y..max_y);
             if team_id_opt.is_none() {
@@ -416,7 +417,7 @@ async fn main() {
                     let [spawn_x, spawn_y] = spawn_coordinate_generator(&mut rng, &active_bases, Some(best_team_id));
                     let starting_tank_definition = tank_classes_definitions.get(&0).unwrap();
                     let starting_color = if starting_tank_definition.color != 255 { starting_tank_definition.color } else { best_team_id };
-                    let new_entity_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, starting_tank_definition.mass, 0.95, 0.0, 0.0, starting_tank_definition.base_speed, 0.05, starting_tank_definition.body_radius, 1, true, starting_tank_definition.shape, best_team_id, starting_color, starting_tank_definition.id, starting_tank_definition.barrels.clone(), parsed_name.clone(), 26000, true, None, 0, starting_tank_definition.base_health, starting_tank_definition.base_health, starting_tank_definition.base_regen, starting_tank_definition.base_damage, starting_tank_definition.base_reload, starting_tank_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, true, true, Some(new_client_id));
+                    let new_entity_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, starting_tank_definition.mass, 0.95, 0.0, 0.0, starting_tank_definition.base_speed, 0.05, starting_tank_definition.body_radius, 1, 1, starting_tank_definition.shape, best_team_id, starting_color, starting_tank_definition.id, starting_tank_definition.barrels.clone(), parsed_name.clone(), 26000, true, None, 0, starting_tank_definition.base_health, starting_tank_definition.base_health, starting_tank_definition.base_regen, starting_tank_definition.base_damage, starting_tank_definition.base_reload, starting_tank_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, true, true, Some(new_client_id));
                     if let Some(game_entity) = game_entities.get_mut(&new_entity_id) { game_entity.stat_points = 45; };
                     player_sessions.insert(new_client_id, PlayerSession { client_id: new_client_id, sender: client_sender.clone(), is_connected: true, disconnect_at: None, ip: client_ip, saved_name: parsed_name.clone(), saved_team: best_team_id, entity_id: Some(new_entity_id), last_camera_pos: (spawn_x, spawn_y), fov_factor: 1.0, entity_created_at: Instant::now() });
                     let _ = client_id_reply.send(new_client_id);
@@ -478,7 +479,7 @@ async fn main() {
             let bot_names_list = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet"];
             let bot_name = format!("[AI] {}", bot_names_list[rng.gen_range(0..bot_names_list.len())]);
             let bot_color = if bot_definition.color != 255 { bot_definition.color } else { selected_team };
-            let bot_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, bot_x, bot_y, 0.0, bot_definition.mass, 0.95, 0.0, 0.0, bot_definition.base_speed, 0.05, bot_definition.body_radius, 1, true, bot_definition.shape, selected_team, bot_color, bot_definition.id, bot_definition.barrels.clone(), bot_name, 26000, true, None, 0, bot_definition.base_health, bot_definition.base_health, bot_definition.base_regen, bot_definition.base_damage, bot_definition.base_reload, bot_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, true, true, false, None);
+            let bot_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, bot_x, bot_y, 0.0, bot_definition.mass, 0.95, 0.0, 0.0, bot_definition.base_speed, 0.05, bot_definition.body_radius, 1, 1, bot_definition.shape, selected_team, bot_color, bot_definition.id, bot_definition.barrels.clone(), bot_name, 26000, true, None, 0, bot_definition.base_health, bot_definition.base_health, bot_definition.base_regen, bot_definition.base_damage, bot_definition.base_reload, bot_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, true, true, false, None);
             bot_entity_ids.insert(bot_id);
         }
         let mut potential_target_list: Vec<(usize, f32, f32, u8, u8)> = Vec::new();
@@ -643,8 +644,8 @@ async fn main() {
                             for _ in 0..10 {
                                 let new_wander_x = rng.gen_range((map_center - 250.0)..(map_center + 250.0));
                                 let new_wander_y = rng.gen_range((map_center - 250.0)..(map_center + 250.0));
-                                let grid_x = (new_wander_x / NODE_SIZE).floor() as i32;
-                                let grid_y = (new_wander_y / NODE_SIZE).floor() as i32;
+                                let grid_x = (new_wander_x / CELL_SIZE).floor() as i32;
+                                let grid_y = (new_wander_y / CELL_SIZE).floor() as i32;
                                 if !maze_pathfinder.walls.contains(&(grid_x, grid_y)) {
                                     game_entity.target_pos = [new_wander_x, new_wander_y];
                                     valid_target_found = true;
@@ -912,7 +913,7 @@ async fn main() {
         for (firing_angle, life_ticks, speed, team, color, x, y, damage, radius, parent_id, health, shape, friction, mass, has_friction, entity_type, parent_barrel_index) in spawn_bullet_queue {
             let vel_x = firing_angle.cos() * speed;
             let vel_y = firing_angle.sin() * speed;
-            let new_bullet_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, x, y, 0.0, mass, 1.0 - friction, vel_x, vel_y, speed, 0.0, radius, entity_type, has_friction, shape, team, color, 0, Vec::new(), "".to_string(), 0, false, Some(parent_id), parent_barrel_index, health, health, 0, damage as i32, 0, 1.0, 0.0, 0.0, current_tick_counter, life_ticks, entity_type, false, false, false, None);
+            let new_bullet_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, x, y, 0.0, mass, if has_friction { 1.0 - friction } else { 1.0 }, vel_x, vel_y, speed, 0.0, radius, entity_type, 0, shape, team, color, 0, Vec::new(), "".to_string(), 0, false, Some(parent_id), parent_barrel_index, health, health, 0, damage as i32, 0, 1.0, 0.0, 0.0, current_tick_counter, life_ticks, entity_type, false, false, false, None);
             if let Some(parent_entity) = game_entities.get_mut(&parent_id) {
                 if parent_barrel_index >= 10000 {
                     let turret_index = (parent_barrel_index / 10000) - 1;
@@ -956,7 +957,7 @@ async fn main() {
                                 let mut a_inside_safe_base = false;
                                 if let Some(physics_a) = world_room.entities.get(id_a) {
                                     for base in &active_bases {
-                                        if base.team_id == entity_a.team && base.w > NODE_SIZE * 1.5 && physics_a.x >= base.x && physics_a.x <= base.x + base.w && physics_a.y >= base.y && physics_a.y <= base.y + base.h {
+                                        if base.team_id == entity_a.team && base.w > CELL_SIZE * 1.5 && physics_a.x >= base.x && physics_a.x <= base.x + base.w && physics_a.y >= base.y && physics_a.y <= base.y + base.h {
                                             a_inside_safe_base = true; break;
                                         }
                                     }
@@ -964,7 +965,7 @@ async fn main() {
                                 let mut b_inside_safe_base = false;
                                 if let Some(physics_b) = world_room.entities.get(id_b) {
                                     for base in &active_bases {
-                                        if base.team_id == entity_b.team && base.w > NODE_SIZE * 1.5 && physics_b.x >= base.x && physics_b.x <= base.x + base.w && physics_b.y >= base.y && physics_b.y <= base.y + base.h {
+                                        if base.team_id == entity_b.team && base.w > CELL_SIZE * 1.5 && physics_b.x >= base.x && physics_b.x <= base.x + base.w && physics_b.y >= base.y && physics_b.y <= base.y + base.h {
                                             b_inside_safe_base = true; break;
                                         }
                                     }
@@ -1137,7 +1138,7 @@ async fn main() {
                      let [spawn_x, spawn_y] = spawn_coordinate_generator(&mut rng, &active_bases, None);
                      let boss_team_id = 5;
                      let boss_color = if boss_definition.color != 255 { boss_definition.color } else { boss_team_id };
-                     let spawned_boss_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, boss_definition.mass, 0.98, 0.0, 0.0, boss_definition.base_speed, 0.02, boss_definition.body_radius, 1, true, boss_definition.shape, boss_team_id, boss_color, boss_definition.id, boss_definition.barrels.clone(), boss_definition.name.clone(), boss_definition.score, true, None, 0, boss_definition.base_health, boss_definition.base_health, boss_definition.base_regen, boss_definition.base_damage, boss_definition.base_reload, boss_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, true, true, false, None);
+                     let spawned_boss_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, boss_definition.mass, 0.98, 0.0, 0.0, boss_definition.base_speed, 0.02, boss_definition.body_radius, 1, 1, boss_definition.shape, boss_team_id, boss_color, boss_definition.id, boss_definition.barrels.clone(), boss_definition.name.clone(), boss_definition.score, true, None, 0, boss_definition.base_health, boss_definition.base_health, boss_definition.base_regen, boss_definition.base_damage, boss_definition.base_reload, boss_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, true, true, false, None);
                      bot_entity_ids.insert(spawned_boss_id);
                      active_game_event = GameEvent::BossFight { boss_id: spawned_boss_id };
                      for session in player_sessions.values() { if session.is_connected { send_notification(&session.sender, &spawn_message); }; }
@@ -1156,7 +1157,7 @@ async fn main() {
                      let egg_definition = tank_classes_definitions.get(&CLASS_EGG).unwrap();
                      let center_x = ROOM_SIZE / 2.0;
                      let center_y = ROOM_SIZE / 2.0;
-                     let spawned_egg_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, center_x, center_y, 0.0, egg_definition.mass, 0.99, 0.0, 0.0, 0.0, 0.0, egg_definition.body_radius, 1, false, egg_definition.shape, 100, egg_definition.color, egg_definition.id, Vec::new(), "The Egg".to_string(), 0, false, None, 0, SENTINEL_HEALTH, SENTINEL_HEALTH, 0, 0, 0, 1.0, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, false, false, None);
+                     let spawned_egg_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, center_x, center_y, 0.0, egg_definition.mass, 0.99, 0.0, 0.0, 0.0, 0.0, egg_definition.body_radius, 1, 1, egg_definition.shape, 100, egg_definition.color, egg_definition.id, Vec::new(), "The Egg".to_string(), 0, false, None, 0, SENTINEL_HEALTH, SENTINEL_HEALTH, 0, 0, 0, 1.0, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, false, false, None);
                      let hunt_timeout_ticks = (300000.0 / TICK_TIME as f32) as usize;
                      active_game_event = GameEvent::EggHunt { egg_id: spawned_egg_id, end_tick: current_tick_counter + hunt_timeout_ticks };
                      for session in player_sessions.values() { if session.is_connected { send_notification(&session.sender, "The egg has appeared! Push it to your base!"); }; }
@@ -1186,7 +1187,7 @@ async fn main() {
                     let reward_boss_id = BOSS_IDS[rng.gen_range(0..BOSS_IDS.len())];
                     let reward_definition = tank_classes_definitions.get(&reward_boss_id).unwrap();
                     let [spawn_x, spawn_y] = spawn_coordinate_generator(&mut rng, &active_bases, Some(capturing_team_id));
-                    let reward_entity_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, reward_definition.mass, 0.98, 0.0, 0.0, reward_definition.base_speed, 0.02, reward_definition.body_radius, 1, true, reward_definition.shape, capturing_team_id, capturing_team_id, reward_definition.id, reward_definition.barrels.clone(), reward_definition.name.clone(), reward_definition.score, true, None, 0, reward_definition.base_health, reward_definition.base_health, reward_definition.base_regen, reward_definition.base_damage, reward_definition.base_reload, reward_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, true, true, false, None);
+                    let reward_entity_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, reward_definition.mass, 0.98, 0.0, 0.0, reward_definition.base_speed, 0.02, reward_definition.body_radius, 1, 1, reward_definition.shape, capturing_team_id, capturing_team_id, reward_definition.id, reward_definition.barrels.clone(), reward_definition.name.clone(), reward_definition.score, true, None, 0, reward_definition.base_health, reward_definition.base_health, reward_definition.base_regen, reward_definition.base_damage, reward_definition.base_reload, reward_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, true, true, false, None);
                     bot_entity_ids.insert(reward_entity_id);
                     active_game_event = GameEvent::EggReward { boss_id: reward_entity_id };
                     for session in player_sessions.values() { if session.is_connected { send_notification(&session.sender, &format!("The egg has been claimed! A powerful ally has come to aid the {} team!", yield_team_name(capturing_team_id))); }; }
@@ -1205,10 +1206,10 @@ async fn main() {
                     let center_grid_pos = SPATIAL_GRID_DIMENSION as f32 / 2.0;
                     let zone_tile_size = 5.0;
                     let half_zone_size = zone_tile_size / 2.0;
-                    let zone_x = (center_grid_pos - half_zone_size) * NODE_SIZE;
-                    let zone_y = (center_grid_pos - half_zone_size) * NODE_SIZE;
-                    let zone_w = zone_tile_size * NODE_SIZE;
-                    let zone_h = zone_tile_size * NODE_SIZE;
+                    let zone_x = (center_grid_pos - half_zone_size) * CELL_SIZE;
+                    let zone_y = (center_grid_pos - half_zone_size) * CELL_SIZE;
+                    let zone_w = zone_tile_size * CELL_SIZE;
+                    let zone_h = zone_tile_size * CELL_SIZE;
                     active_bases.push(BaseZone { x: zone_x, y: zone_y, w: zone_w, h: zone_h, team_id: 35, party_code: "KOTH".to_string() });
                     let mut base_update_packet = vec![11];
                     base_update_packet.extend((active_bases.len() as u16).to_le_bytes());
@@ -1267,7 +1268,7 @@ async fn main() {
                         if let Some(celestial_id) = available_celestial_ids.pop() {
                             let celestial_definition = tank_classes_definitions.get(&celestial_id).unwrap();
                             let [spawn_x, spawn_y] = spawn_coordinate_generator(&mut rng, &active_bases, Some(team_id));
-                            let celestial_entity_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, celestial_definition.mass, 0.98, 0.0, 0.0, celestial_definition.base_speed, 0.02, celestial_definition.body_radius, 1, true, celestial_definition.shape, team_id, team_id, celestial_definition.id, celestial_definition.barrels.clone(), celestial_definition.name.clone(), celestial_definition.score, true, None, 0, celestial_definition.base_health, celestial_definition.base_health, celestial_definition.base_regen, celestial_definition.base_damage, celestial_definition.base_reload, celestial_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, true, true, false, None);
+                            let celestial_entity_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, celestial_definition.mass, 0.98, 0.0, 0.0, celestial_definition.base_speed, 0.02, celestial_definition.body_radius, 1, 1, celestial_definition.shape, team_id, team_id, celestial_definition.id, celestial_definition.barrels.clone(), celestial_definition.name.clone(), celestial_definition.score, true, None, 0, celestial_definition.base_health, celestial_definition.base_health, celestial_definition.base_regen, celestial_definition.base_damage, celestial_definition.base_reload, celestial_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, true, true, false, None);
                             bot_entity_ids.insert(celestial_entity_id);
                             spawned_celestial_list.push(celestial_entity_id);
                         }
@@ -1304,7 +1305,7 @@ async fn main() {
                 if current_tick_counter > start_tick + event_warning_duration {
                     let center_x = ROOM_SIZE / 2.0;
                     let center_y = ROOM_SIZE / 2.0;
-                    let bounty_entity_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, center_x, center_y, 0.0, 100.0, 0.9, 0.0, 0.0, 0.0, 0.0, 25.0, 1, false, 0, 255, 3, 0, Vec::new(), "Bounty".to_string(), 0, false, None, 0, SENTINEL_HEALTH, SENTINEL_HEALTH, 0, 0, 0, 1.0, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, false, true, None);
+                    let bounty_entity_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, center_x, center_y, 0.0, 100.0, 0.9, 0.0, 0.0, 0.0, 0.0, 25.0, 1, 0, 0, 255, 3, 0, Vec::new(), "Bounty".to_string(), 0, false, None, 0, SENTINEL_HEALTH, SENTINEL_HEALTH, 0, 0, 0, 1.0, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, false, true, None);
                     let bounty_timeout_ticks = (60000.0 / TICK_TIME as f32) as usize;
                     active_game_event = GameEvent::BountyClaiming { claim_id: bounty_entity_id, end_tick: current_tick_counter + bounty_timeout_ticks };
                     for session in player_sessions.values() { if session.is_connected { send_notification(&session.sender, "The bounty has appeared at the center!"); }; }
@@ -1406,17 +1407,17 @@ async fn main() {
                     for (entity_id, game_entity) in &game_entities {
                         if !game_entity.dead && game_entity.entity_type == ENTITY_TANK && game_entity.team != 0 && game_entity.team != 255 {
                              if let Some(physics_entity) = world_room.entities.get(*entity_id) {
-                                 let grid_x = (physics_entity.x / NODE_SIZE).floor();
-                                 let grid_y = (physics_entity.y / NODE_SIZE).floor();
-                                 let base_x = grid_x * NODE_SIZE;
-                                 let base_y = grid_y * NODE_SIZE;
+                                 let grid_x = (physics_entity.x / CELL_SIZE).floor();
+                                 let grid_y = (physics_entity.y / CELL_SIZE).floor();
+                                 let base_x = grid_x * CELL_SIZE;
+                                 let base_y = grid_y * CELL_SIZE;
                                  if grid_x >= 0.0 && grid_x < SPATIAL_GRID_DIMENSION as f32 && grid_y >= 0.0 && grid_y < SPATIAL_GRID_DIMENSION as f32 {
                                      let mut found_base_index = None;
                                      for (index, base) in active_bases.iter().enumerate() { if (base.x - base_x).abs() < 1.0 && (base.y - base_y).abs() < 1.0 { found_base_index = Some(index); break; } }
                                      if let Some(index) = found_base_index {
                                          if active_bases[index].team_id != game_entity.team { active_bases[index].team_id = game_entity.team; has_base_changed = true; }
                                      } else {
-                                         active_bases.push(BaseZone { x: base_x, y: base_y, w: NODE_SIZE, h: NODE_SIZE, team_id: game_entity.team, party_code: "".to_string() }); has_base_changed = true;
+                                         active_bases.push(BaseZone { x: base_x, y: base_y, w: CELL_SIZE, h: CELL_SIZE, team_id: game_entity.team, party_code: "".to_string() }); has_base_changed = true;
                                      }
                                  }
                              }
@@ -1475,7 +1476,7 @@ async fn main() {
                             let meteor_speed = meteor_definition.base_speed * rng.gen_range(1.0..1.5);
                             let velocity_x = (diff_x / distance) * meteor_speed;
                             let velocity_y = (diff_y / distance) * meteor_speed;
-                            let meteor_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, meteor_definition.mass, 0.0, velocity_x, velocity_y, meteor_speed, 0.0, meteor_definition.body_radius, 1, false, meteor_definition.shape, TEAM_METEOR, TEAM_METEOR, meteor_definition.id, vec![], "Meteor".to_string(), 0, false, None, 0, meteor_definition.base_health, meteor_definition.base_health, 0, meteor_definition.base_damage, 0, 1.0, meteor_definition.auto_spin, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, false, false, None);
+                            let meteor_id = spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, 0.0, meteor_definition.mass, 1.0, velocity_x, velocity_y, meteor_speed, 0.0, meteor_definition.body_radius, 1, 2, meteor_definition.shape, TEAM_METEOR, TEAM_METEOR, meteor_definition.id, vec![], "Meteor".to_string(), 0, false, None, 0, meteor_definition.base_health, meteor_definition.base_health, 0, meteor_definition.base_damage, 0, 1.0, meteor_definition.auto_spin, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, false, false, None);
                             meteor_ids.push(meteor_id);
                         }
                         next_spawn_tick = current_tick_counter + rng.gen_range(60..300);
@@ -1495,7 +1496,7 @@ async fn main() {
                  let is_bot_entity = is_crasher_type;
                  let spin_direction = if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
                  let spin_speed = if is_crasher_type { 0.0 } else { rng.gen_range(0.005..0.01) * spin_direction };
-                 spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, rng.gen_range(0.0..6.28), poly_definition.mass, 0.99, 0.0, 0.0, poly_definition.base_speed, 0.05, poly_definition.body_radius, 1, true, poly_definition.shape, TEAM_POLYGON, poly_definition.color, poly_definition.id, Vec::new(), "".to_string(), poly_definition.score, false, None, 0, poly_definition.base_health, poly_definition.base_health, 0, poly_definition.base_damage, 0, 1.0, spin_speed, 0.0, current_tick_counter, usize::MAX, ENTITY_POLYGON, is_bot_entity, true, false, None);
+                 spawn_game_entity(&mut world_room, &mut game_entities, &tank_classes_definitions, spawn_x, spawn_y, rng.gen_range(0.0..6.28), poly_definition.mass, 0.99, 0.0, 0.0, poly_definition.base_speed, 0.05, poly_definition.body_radius, 1, 1, poly_definition.shape, TEAM_POLYGON, poly_definition.color, poly_definition.id, Vec::new(), "".to_string(), poly_definition.score, false, None, 0, poly_definition.base_health, poly_definition.base_health, 0, poly_definition.base_damage, 0, 1.0, spin_speed, 0.0, current_tick_counter, usize::MAX, ENTITY_POLYGON, is_bot_entity, true, false, None);
             }
         }
         world_room.update();
@@ -1680,7 +1681,7 @@ fn handle_input<F>(entity_id: usize, packet_data: Vec<u8>, world_room: &mut Room
              let [respawn_x, respawn_y] = spawn_coordinate_generator(rng, active_bases, Some(session.saved_team));
              let team_id = session.saved_team;
              let player_name = session.saved_name.clone();
-             let new_entity_id = spawn_game_entity(world_room, game_entities, tank_classes_definitions, respawn_x, respawn_y, 0.0, starting_definition.mass, 0.95, 0.0, 0.0, starting_definition.base_speed, 0.05, starting_definition.body_radius, 1, true, starting_definition.shape, team_id, if starting_definition.color != 255 { starting_definition.color } else { team_id }, starting_definition.id, starting_definition.barrels.clone(), player_name, 26000, true, None, 0, starting_definition.base_health, starting_definition.base_health, starting_definition.base_regen, starting_definition.base_damage, starting_definition.base_reload, starting_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, true, true, Some(session.client_id));
+             let new_entity_id = spawn_game_entity(world_room, game_entities, tank_classes_definitions, respawn_x, respawn_y, 0.0, starting_definition.mass, 0.95, 0.0, 0.0, starting_definition.base_speed, 0.05, starting_definition.body_radius, 1, 1, starting_definition.shape, team_id, if starting_definition.color != 255 { starting_definition.color } else { team_id }, starting_definition.id, starting_definition.barrels.clone(), player_name, 26000, true, None, 0, starting_definition.base_health, starting_definition.base_health, starting_definition.base_regen, starting_definition.base_damage, starting_definition.base_reload, starting_definition.fov_factor, 0.0, 0.0, current_tick_counter, usize::MAX, ENTITY_TANK, false, true, true, Some(session.client_id));
             if let Some(game_entity) = game_entities.get_mut(&new_entity_id) { game_entity.stat_points = 45; };
             session.entity_id = Some(new_entity_id);
             session.last_camera_pos = (respawn_x, respawn_y);
@@ -1725,10 +1726,7 @@ fn handle_input<F>(entity_id: usize, packet_data: Vec<u8>, world_room: &mut Room
                 let direction_code = packet_data[1];
                 if direction_code != 16 {
                     if let Some(game_entity) = game_entities.get_mut(&entity_id) { game_entity.invulnerable = false; };
-                }
-                if direction_code > 1 && direction_code < 4 { world_room.stop_entity_movement_x(entity_id) }
-                else if direction_code < 2 { world_room.stop_entity_movement_y(entity_id) }
-                else if direction_code == 16 { world_room.stop_entity_movement(entity_id) };
+                };
                 world_room.create_entity_movement_from_cardinal_direction(entity_id, direction_code);
             }
         },

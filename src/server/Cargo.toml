@@ -9,3 +9,4 @@ tokio = { version = "1.36", features = ["full"] }
 tokio-tungstenite = "0.20"
 futures-util = "0.3"
 wide = "1.1.1"
+rayon = "1.12.0"

@@ -1,4 +1,4 @@
-use collision_engine::engine::config::config_data::ROOM_SIZE;
+pub const ROOM_SIZE: f32 = 1024.0;
 
 pub const MAP_DIMENSION: usize = 32;
 pub const WALL_DIAMETER: f32 = ROOM_SIZE / (MAP_DIMENSION as f32);
